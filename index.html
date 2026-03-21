@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pistón Barbería</title>
+<title>Píston Barbería</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',sans-serif;font-size:13px;background:#F8FAFC;color:#1E293B}
@@ -114,7 +114,7 @@ tr:hover td{background:#F8FAFC}
 <!-- LOGIN -->
 <div id="loginScreen">
   <div class="login-box">
-    <h1>✂ Pistón Barbería</h1>
+    <h1>✂ Píston Barbería</h1>
     <p>Sistema de gestión interno</p>
     <input type="password" id="pwInput" placeholder="Contraseña de acceso" onkeydown="if(event.key==='Enter')checkPw()">
     <button onclick="checkPw()">Ingresar</button>
@@ -130,7 +130,7 @@ tr:hover td{background:#F8FAFC}
 <div id="app">
   <div class="topbar">
     <div>
-      <div class="topbar-title">✂ PISTÓN BARBERÍA</div>
+      <div class="topbar-title">✂ PÍSTON BARBERÍA</div>
       <div class="topbar-subtitle">Sistema de Gestión</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
@@ -580,7 +580,7 @@ function renderVentaForm(){
     <div id="bloqueAuth" style="display:none">
       <div class="form-row">
         <div class="form-group">
-          <label>Cod. Autorización <span style="color:var(--red)">*</span></label>
+          <label>Cod. Autorización <span style="color:#94A3B8;font-weight:400">(opcional)</span></label>
           <input type="text" id="vCodAuth" placeholder="Código de autorización">
         </div>
         <div class="form-group">
@@ -685,9 +685,13 @@ function ventaFormaPagoChange(val){
 function ventaEsWebChange(checked){
   document.getElementById('bloqueWeb').style.display = checked ? 'block' : 'none';
   const fp = document.getElementById('vFormaPago');
+  const bSel = document.getElementById('vBarbero');
   if(checked){
     fp.value = 'MP';
     document.getElementById('bloqueAuth').style.display = 'block';
+    // Auto-seleccionar PISTON
+    const pistonOpt = Array.from(bSel.options).find(o=>o.text.toUpperCase().includes('PISTON'));
+    if(pistonOpt) bSel.value = pistonOpt.value;
   } else {
     fp.value = 'EF';
     document.getElementById('bloqueAuth').style.display = 'none';
@@ -811,7 +815,7 @@ async function submitVenta(){
   const tipo=document.getElementById('vTipo').value;
   const formaPago=document.getElementById('vFormaPago').value;
   if(formaPago==='TK'||formaPago==='TRF'||formaPago==='MP'){
-    if(!document.getElementById('vCodAuth').value){toast('Ingresa el Cod. Autorización','error');return;}
+    // Cod. Autorización es opcional
     if(!document.getElementById('vBoleta').value){toast('Ingresa el N° Boleta','error');return;}
   }
   const fecha=document.getElementById('vFecha').value;
@@ -2982,7 +2986,7 @@ function gcPreview(){
   ctx.restore();
 
   // =============================================
-  // PANEL DERECHO — negro con diseño Pistón
+  // PANEL DERECHO — negro con diseño Píston
   // =============================================
   ctx.fillStyle='#000000';
   ctx.fillRect(splitX,0,W-splitX,H);
