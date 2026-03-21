@@ -363,7 +363,7 @@ async function loadDashboard(){
   <div class="grid-2" style="margin-bottom:16px">
     <div class="card">
       <div class="card-title">Ventas por Barbero</div>
-      ${Object.entries(byBarbero).sort((a,b)=>b[1].ventas-a[1].ventas).map(([n,d])=>`
+      ${Object.entries(byBarbero).filter(([n])=>!n.toUpperCase().includes('PISTON')).sort((a,b)=>b[1].ventas-a[1].ventas).map(([n,d])=>`
         <div class="bar-chart-row">
           <div class="bar-chart-label">${n.split(' ')[0]}</div>
           <div class="bar-chart-bar"><div class="bar-chart-fill" style="width:${Math.round(d.ventas/barMax*100)}%"></div></div>
@@ -375,7 +375,7 @@ async function loadDashboard(){
       <table>
         <thead><tr><th>Barbero</th><th>Comisión Svc</th><th>10% Prod.</th><th>Propinas</th><th>Total</th></tr></thead>
         <tbody>
-          ${Object.entries(byBarbero).sort((a,b)=>b[1].total-a[1].total).map(([n,d])=>`
+          ${Object.entries(byBarbero).filter(([n])=>!n.toUpperCase().includes('PISTON')).sort((a,b)=>b[1].total-a[1].total).map(([n,d])=>`
           <tr>
             <td><strong>${n.split(' ')[0]}</strong></td>
             <td>${fmtCLP(d.comision)}</td>
