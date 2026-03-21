@@ -66,6 +66,7 @@ tr:hover td{background:#F8FAFC}
 .badge-amber{background:#FEF3C7;color:#B45309}
 .badge-gray{background:#F1F5F9;color:#475569}
 .badge-purple{background:#EDE9FE;color:#6D28D9}
+.badge-mp{background:#E0F2FE;color:#0369A1}
 /* PROGRESS BAR */
 .progress-bar{height:6px;background:#E2E8F0;border-radius:99px;overflow:hidden}
 .progress-fill{height:100%;border-radius:99px;transition:.3s}
@@ -162,7 +163,7 @@ window._bridge = {};
  'processConcilFile','exportConcilErrors',
  'saveBarbero','deleteBarbero','startEditBarbero','saveEditBarbero','cancelEditBarbero',
  'saveServicio','deleteServicio','startEditServicio','saveEditServicio','cancelEditServicio',
- 'ventaFechaChange','ventaTipoChange','ventaFormaPagoChange','ventaServicioChange',
+ 'ventaFechaChange','ventaTipoChange','ventaFormaPagoChange','ventaServicioChange','ventaEsWebChange',
  'processImportFile','confirmImport','cancelImport',
  'concilSetAnio','concilSetMes','runConciliacion',
  'arqueoExportCSV','saveSaldoInicial','gastoSetTab','gastoSetAnio','gastoSetMes',
@@ -269,6 +270,7 @@ async function loadDashboard(){
   const ef=vFilt.filter(v=>v.forma_pago==='EF').reduce((s,v)=>s+(v.total||0),0);
   const tk=vFilt.filter(v=>v.forma_pago==='TK').reduce((s,v)=>s+(v.total||0),0);
   const trf=vFilt.filter(v=>v.forma_pago==='TRF').reduce((s,v)=>s+(v.total||0),0);
+  const mp=vFilt.filter(v=>v.forma_pago==='MP').reduce((s,v)=>s+(v.total||0),0);
 
   // Por barbero
   const byBarbero={};
@@ -334,6 +336,7 @@ async function loadDashboard(){
         <span class="badge badge-green">EF ${fmtCLP(ef)}</span>
         <span class="badge badge-blue">TK ${fmtCLP(tk)}</span>
         <span class="badge badge-purple">TRF ${fmtCLP(trf)}</span>
+        <span class="badge badge-mp">MP ${fmtCLP(mp)}</span>
       </div>
     </div>
   </div>
@@ -377,7 +380,7 @@ async function loadDashboard(){
             <td>${(v.barbero_nombre||'').split(' ')[0]}</td>
             <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.servicio_producto||''}</td>
             <td>${fmtCLP(v.total)}</td>
-            <td><span class="badge ${v.forma_pago==='EF'?'badge-green':v.forma_pago==='TK'?'badge-blue':'badge-purple'}">${v.forma_pago}</span></td>
+            <td><span class="badge ${v.forma_pago==='EF'?'badge-green':v.forma_pago==='TK'?'badge-blue':v.forma_pago==='MP'?'badge-mp':'badge-purple'}">${v.forma_pago}</span></td>
           </tr>`).join('')||'<tr><td colspan="5" style="color:#64748B">Sin datos</td></tr>'}
         </tbody>
       </table>
@@ -519,11 +522,12 @@ function renderVentaForm(){
           <option value="EF">EF - Efectivo</option>
           <option value="TK">TK - Tarjeta</option>
           <option value="TRF">TRF - Transferencia</option>
+          <option value="MP">MP - Mercado Pago</option>
         </select>
       </div>
     </div>
 
-    <!-- Cod Auth + Boleta (obligatorio TK/TRF) -->
+    <!-- Cod Auth + Boleta (obligatorio TK/TRF/MP) -->
     <div id="bloqueAuth" style="display:none">
       <div class="form-row">
         <div class="form-group">
@@ -537,13 +541,31 @@ function renderVentaForm(){
       </div>
     </div>
 
+    <!-- Campos exclusivos venta web -->
+    <div id="bloqueWeb" style="display:none;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:12px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:var(--blue);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">🌐 Datos Venta Web</div>
+      <div class="form-row" style="margin-bottom:0">
+        <div class="form-group">
+          <label>N° de Pedido</label>
+          <input type="text" id="vNroPedido" placeholder="Ej: 1042">
+        </div>
+        <div class="form-group">
+          <label>Monto Despacho <span style="color:#94A3B8;font-weight:400">(solo informativo)</span></label>
+          <input type="number" id="vMontoDespacho" value="0" placeholder="0">
+        </div>
+      </div>
+    </div>
+
     <div class="form-row">
       <div class="form-group">
         <label>Comentarios</label>
         <input type="text" id="vComentarios" placeholder="Notas adicionales (opcional)">
       </div>
-      <div class="form-group" style="flex:0 0 140px;justify-content:flex-end;align-items:flex-end">
-        <label><input type="checkbox" id="vEsWeb" style="margin-right:5px">Venta Web</label>
+      <div class="form-group" style="flex:0 0 160px;justify-content:flex-end;align-items:flex-end">
+        <label style="cursor:pointer;display:flex;align-items:center;gap:6px;padding:8px 12px;background:#F1F5F9;border-radius:6px;border:1px solid var(--border)">
+          <input type="checkbox" id="vEsWeb" onchange="ventaEsWebChange(this.checked)" style="width:15px;height:15px">
+          <span style="font-size:12px;font-weight:600">🌐 Venta Web</span>
+        </label>
       </div>
     </div>
 
@@ -607,7 +629,19 @@ function ventaTipoChange(val){
 }
 
 function ventaFormaPagoChange(val){
-  document.getElementById('bloqueAuth').style.display=(val==='TK'||val==='TRF')?'block':'none';
+  document.getElementById('bloqueAuth').style.display=(val==='TK'||val==='TRF'||val==='MP')?'block':'none';
+}
+
+function ventaEsWebChange(checked){
+  document.getElementById('bloqueWeb').style.display = checked ? 'block' : 'none';
+  const fp = document.getElementById('vFormaPago');
+  if(checked){
+    fp.value = 'MP';
+    document.getElementById('bloqueAuth').style.display = 'block';
+  } else {
+    fp.value = 'EF';
+    document.getElementById('bloqueAuth').style.display = 'none';
+  }
 }
 
 function updateTotal(){
@@ -664,7 +698,7 @@ async function submitVenta(){
   const bNombre=barberos.find(b=>b.id===bId)?.nombre||'';
   const tipo=document.getElementById('vTipo').value;
   const formaPago=document.getElementById('vFormaPago').value;
-  if(formaPago==='TK'||formaPago==='TRF'){
+  if(formaPago==='TK'||formaPago==='TRF'||formaPago==='MP'){
     if(!document.getElementById('vCodAuth').value){toast('Ingresa el Cod. Autorización','error');return;}
     if(!document.getElementById('vBoleta').value){toast('Ingresa el N° Boleta','error');return;}
   }
@@ -683,6 +717,8 @@ async function submitVenta(){
     comentarios:document.getElementById('vComentarios').value||null,
     cod_autorizacion:document.getElementById('vCodAuth')?.value||null,
     boleta:document.getElementById('vBoleta')?.value||null,
+    numero_pedido:document.getElementById('vNroPedido')?.value||null,
+    monto_despacho:Number(document.getElementById('vMontoDespacho')?.value||0)||null,
   };
 
   showOverlay();
@@ -820,7 +856,7 @@ function renderHistorialRow(v,bOpts,sOpts){
     </td>
     <td><strong>${fmtCLP(v.total)}</strong></td>
     <td>
-      <span class="view-cell"><span class="badge ${v.forma_pago==='EF'?'badge-green':v.forma_pago==='TK'?'badge-blue':'badge-purple'}">${v.forma_pago||''}</span></span>
+      <span class="view-cell"><span class="badge ${v.forma_pago==='EF'?'badge-green':v.forma_pago==='TK'?'badge-blue':v.forma_pago==='MP'?'badge-mp':'badge-purple'}">${v.forma_pago||''}</span></span>
       <span class="edit-cell"><select id="he-pago-${v.id}"><option value="EF">EF</option><option value="TK">TK</option><option value="TRF">TRF</option></select></span>
     </td>
     <td>
@@ -2228,7 +2264,7 @@ function renderImportPreview(tipo){
       <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.servicio_producto}">${r.servicio_producto||'—'}</td>
       <td>${fmtCLP(r.monto)}</td><td>${fmtCLP(r.propina)}</td>
       <td><strong>${fmtCLP(r.total)}</strong></td>
-      <td><span class="badge ${r.forma_pago==='EF'?'badge-green':r.forma_pago==='TK'?'badge-blue':'badge-purple'}">${r.forma_pago}</span></td>
+      <td><span class="badge ${r.forma_pago==='EF'?'badge-green':r.forma_pago==='TK'?'badge-blue':r.forma_pago==='MP'?'badge-mp':'badge-purple'}">${r.forma_pago}</span></td>
       <td>${r._errors.length?`<span class="badge badge-amber" title="${r._errors.join(', ')}">⚠ ${r._errors[0]}</span>`:'<span class="badge badge-green">✓</span>'}</td>
     </tr>`).join('')}
     </tbody></table>`;
@@ -3077,6 +3113,7 @@ window._bridge.ventaFechaChange=ventaFechaChange;
 window._bridge.ventaTipoChange=ventaTipoChange;
 window._bridge.ventaFormaPagoChange=ventaFormaPagoChange;
 window._bridge.ventaServicioChange=ventaServicioChange;
+window._bridge.ventaEsWebChange=ventaEsWebChange;
 window._bridge.loadImportar=loadImportar;
 window._bridge.processImportFile=processImportFile;
 window._bridge.confirmImport=confirmImport;
