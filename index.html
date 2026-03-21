@@ -145,6 +145,7 @@ tr:hover td{background:#F8FAFC}
     <button class="tab-btn" onclick="go('conciliacion')">🔄 Conciliación</button>
     <button class="tab-btn" onclick="go('equipo')">👥 Equipo</button>
     <button class="tab-btn" onclick="go('importar')">📥 Importar</button>
+    <button class="tab-btn" onclick="go('arqueo')">🏦 Arqueo Caja</button>
   </div>
   <div class="content" id="mainContent"></div>
 </div>
@@ -152,7 +153,7 @@ tr:hover td{background:#F8FAFC}
 <!-- BRIDGE -->
 <script>
 window._bridge = {};
-['checkPw','go','dshTab','loadDashboard','loadVenta','loadHistorial','loadInventario','loadGastos','loadConciliacion','loadEquipo','loadImportar',
+['checkPw','go','dshTab','loadDashboard','loadVenta','loadHistorial','loadInventario','loadGastos','loadConciliacion','loadEquipo','loadImportar','loadArqueo',
  'submitVenta','addCartItem','removeCartItem','clearCart',
  'filterHistorial','deleteVenta','startEditVenta','saveEditVenta','cancelEditVenta','exportHistorialCSV',
  'saveProducto','deleteProducto','startEditProducto','saveEditProducto','cancelEditProducto',
@@ -162,7 +163,8 @@ window._bridge = {};
  'saveServicio','deleteServicio','startEditServicio','saveEditServicio','cancelEditServicio',
  'ventaFechaChange','ventaTipoChange','ventaFormaPagoChange','ventaServicioChange',
  'processImportFile','confirmImport','cancelImport',
- 'concilSetAnio','concilSetMes','runConciliacion'
+ 'concilSetAnio','concilSetMes','runConciliacion',
+ 'arqueoExportCSV'
 ].forEach(fn=>{
   window[fn]=function(){return window._bridge[fn]&&window._bridge[fn](...arguments)};
 });
@@ -225,10 +227,10 @@ function checkPw(){
 function go(tab){
   currentTab=tab;
   document.querySelectorAll('.tab-btn').forEach((b,i)=>{
-    const tabs=['dashboard','venta','historial','inventario','gastos','conciliacion','equipo','importar'];
+    const tabs=['dashboard','venta','historial','inventario','gastos','conciliacion','equipo','importar','arqueo'];
     b.classList.toggle('active',tabs[i]===tab);
   });
-  const fns={dashboard:loadDashboard,venta:loadVenta,historial:loadHistorial,inventario:loadInventario,gastos:loadGastos,conciliacion:loadConciliacion,equipo:loadEquipo,importar:loadImportar};
+  const fns={dashboard:loadDashboard,venta:loadVenta,historial:loadHistorial,inventario:loadInventario,gastos:loadGastos,conciliacion:loadConciliacion,equipo:loadEquipo,importar:loadImportar,arqueo:loadArqueo};
   fns[tab]&&fns[tab]();
 }
 
@@ -2164,6 +2166,289 @@ async function confirmImport(){
 
 function cancelImport(){importPreview=[];loadImportar();}
 
+// ============ ARQUEO DE CAJA ============
+let arqueoFiltros = { anio: new Date().getFullYear(), mes: new Date().getMonth()+1 };
+
+async function loadArqueo(){
+  showOverlay();
+  const [vRes, gRes] = await Promise.all([
+    sb.from('ventas').select('*').eq('forma_pago','EF').order('fecha').order('created_at'),
+    sb.from('gastos').select('*').eq('forma_pago','EF').order('fecha').order('created_at'),
+  ]);
+  hideOverlay();
+  const ventas  = vRes.data||[];
+  const gastos  = gRes.data||[];
+  renderArqueo(ventas, gastos);
+}
+
+function renderArqueo(ventas, gastos){
+  // Años disponibles
+  const aniosV = ventas.map(v=>v.anio).filter(Boolean);
+  const aniosG = gastos.map(g=>g.fecha?Number(g.fecha.split('-')[0]):null).filter(Boolean);
+  const anios  = [...new Set([...aniosV,...aniosG])].sort((a,b)=>b-a);
+  if(!anios.length) anios.push(new Date().getFullYear());
+  if(!anios.includes(arqueoFiltros.anio)) arqueoFiltros.anio = anios[0];
+
+  // Filter by selected month/year
+  const vMes = ventas.filter(v=>v.anio==arqueoFiltros.anio && v.n_mes==arqueoFiltros.mes);
+  const gMes = gastos.filter(g=>{
+    if(!g.fecha) return false;
+    const [y,m] = g.fecha.split('-');
+    return Number(y)==arqueoFiltros.anio && Number(m)==arqueoFiltros.mes;
+  });
+
+  // ---- Métricas globales ----
+  const totalEntradas = vMes.reduce((s,v)=>s+(v.total||0),0);
+  const totalSalidas  = gMes.reduce((s,g)=>s+(g.monto||0),0);
+  const saldoCaja     = totalEntradas - totalSalidas;
+
+  // Entradas por tipo de venta
+  const entradasSvc  = vMes.filter(v=>v.tipo==='servicio').reduce((s,v)=>s+(v.total||0),0);
+  const entradasProd = vMes.filter(v=>v.tipo==='PRODUCTO').reduce((s,v)=>s+(v.total||0),0);
+  const propinasEF   = vMes.reduce((s,v)=>s+(v.propina||0),0);
+
+  // Salidas por categoría
+  const byCat = {};
+  gMes.forEach(g=>{ const c=g.categoria||'Otro'; byCat[c]=(byCat[c]||0)+(g.monto||0); });
+
+  // ---- Movimientos por día ----
+  const diasMap = {}; // fecha -> { entradas:[], salidas:[] }
+  vMes.forEach(v=>{
+    if(!v.fecha) return;
+    if(!diasMap[v.fecha]) diasMap[v.fecha]={entradas:[],salidas:[]};
+    diasMap[v.fecha].entradas.push(v);
+  });
+  gMes.forEach(g=>{
+    if(!g.fecha) return;
+    if(!diasMap[g.fecha]) diasMap[g.fecha]={entradas:[],salidas:[]};
+    diasMap[g.fecha].salidas.push(g);
+  });
+  const diasOrdenados = Object.keys(diasMap).sort();
+
+  // Saldo acumulado por día
+  let acum = 0;
+  const diasConSaldo = diasOrdenados.map(fecha=>{
+    const e = diasMap[fecha].entradas.reduce((s,v)=>s+(v.total||0),0);
+    const s = diasMap[fecha].salidas.reduce((s,g)=>s+(g.monto||0),0);
+    acum += e - s;
+    return { fecha, entradas:diasMap[fecha].entradas, salidas:diasMap[fecha].salidas, totalE:e, totalS:s, saldoDia:e-s, saldoAcum:acum };
+  });
+
+  const anioOpts = anios.map(a=>`<option value="${a}" ${arqueoFiltros.anio==a?'selected':''}>${a}</option>`).join('');
+  const mesOpts  = MESES.map((m,i)=>`<option value="${i+1}" ${arqueoFiltros.mes==i+1?'selected':''}>${m}</option>`).join('');
+
+  document.getElementById('mainContent').innerHTML=`
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap">
+    <span class="sec-title" style="margin:0">🏦 Arqueo de Caja — Efectivo</span>
+    <select onchange="window._bridge.arqueoSetAnio(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">
+      ${anioOpts}
+    </select>
+    <select onchange="window._bridge.arqueoSetMes(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">
+      ${mesOpts}
+    </select>
+    <span style="font-size:12px;color:#64748B;margin-left:4px">${MESES[arqueoFiltros.mes-1]} ${arqueoFiltros.anio}</span>
+    <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="arqueoExportCSV()">⬇ Exportar CSV</button>
+  </div>
+
+  <!-- Métricas principales -->
+  <div class="grid-4" style="margin-bottom:16px">
+    <div class="metric">
+      <div class="metric-label">💵 Entradas EF</div>
+      <div class="metric-value" style="color:var(--green)">${fmtCLP(totalEntradas)}</div>
+      <div class="metric-sub">${vMes.length} transacciones</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">💸 Salidas EF</div>
+      <div class="metric-value" style="color:var(--red)">${fmtCLP(totalSalidas)}</div>
+      <div class="metric-sub">${gMes.length} gastos</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">🏦 Saldo en Caja</div>
+      <div class="metric-value" style="color:${saldoCaja>=0?'var(--green)':'var(--red)'}; font-size:22px">${fmtCLP(saldoCaja)}</div>
+      <div class="metric-sub">Entradas − Salidas</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Desglose entradas</div>
+      <div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:#64748B">Servicios</span><span>${fmtCLP(entradasSvc)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:#64748B">Productos</span><span>${fmtCLP(entradasProd)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:#64748B">Propinas</span><span>${fmtCLP(propinasEF)}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Desglose salidas por categoría -->
+  ${Object.keys(byCat).length>0?`
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">Salidas por Categoría</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      ${Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,monto])=>`
+        <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:8px 14px;min-width:160px">
+          <div style="font-size:11px;color:#64748B;font-weight:600">${cat}</div>
+          <div style="font-size:16px;font-weight:700;color:var(--red)">${fmtCLP(monto)}</div>
+        </div>`).join('')}
+    </div>
+  </div>`:''}
+
+  <!-- Movimientos día a día -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">Movimientos Día a Día</div>
+    ${diasConSaldo.length===0
+      ? '<p style="color:#64748B;text-align:center;padding:20px">Sin movimientos en efectivo para este período</p>'
+      : `<div style="overflow-x:auto"><table>
+        <thead><tr>
+          <th>Fecha</th><th>Día</th>
+          <th style="color:var(--green)">Entradas EF</th>
+          <th style="color:var(--red)">Salidas EF</th>
+          <th>Saldo del Día</th>
+          <th>Saldo Acumulado</th>
+        </tr></thead>
+        <tbody>
+          ${diasConSaldo.map(d=>`
+          <tr>
+            <td><strong>${d.fecha}</strong></td>
+            <td style="color:#64748B">${d.entradas[0]?.dia_semana||d.salidas[0]?.fecha?new Date(d.fecha+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short'}):''}</td>
+            <td style="color:var(--green);font-weight:600">${d.totalE>0?fmtCLP(d.totalE):'—'}</td>
+            <td style="color:var(--red);font-weight:600">${d.totalS>0?fmtCLP(d.totalS):'—'}</td>
+            <td>
+              <span style="font-weight:700;color:${d.saldoDia>=0?'var(--green)':'var(--red)'}">
+                ${d.saldoDia>=0?'+':''}${fmtCLP(d.saldoDia)}
+              </span>
+            </td>
+            <td>
+              <span style="font-weight:700;color:${d.saldoAcum>=0?'#1E293B':'var(--red)'}">
+                ${fmtCLP(d.saldoAcum)}
+              </span>
+            </td>
+          </tr>
+          <!-- Detalle del día (colapsable con click) -->
+          ${d.entradas.length>0||d.salidas.length>0?`
+          <tr id="det-${d.fecha}" style="display:none;background:#F8FAFC">
+            <td colspan="6" style="padding:0 10px 10px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding-top:8px">
+                <div>
+                  ${d.entradas.length>0?`
+                  <div style="font-size:11px;font-weight:600;color:var(--green);margin-bottom:4px">ENTRADAS</div>
+                  ${d.entradas.map(v=>`
+                    <div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;border-bottom:1px solid #F1F5F9">
+                      <span style="color:#64748B">${(v.barbero_nombre||'').split(' ')[0]} · ${v.servicio_producto||''}</span>
+                      <span style="font-weight:600">${fmtCLP(v.total)}</span>
+                    </div>`).join('')}`:''}
+                </div>
+                <div>
+                  ${d.salidas.length>0?`
+                  <div style="font-size:11px;font-weight:600;color:var(--red);margin-bottom:4px">SALIDAS</div>
+                  ${d.salidas.map(g=>`
+                    <div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;border-bottom:1px solid #F1F5F9">
+                      <span style="color:#64748B">${g.descripcion||''} <span class="badge badge-amber" style="font-size:10px">${g.categoria}</span></span>
+                      <span style="font-weight:600;color:var(--red)">${fmtCLP(g.monto)}</span>
+                    </div>`).join('')}`:''}
+                </div>
+              </div>
+            </td>
+          </tr>`:''}
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="background:#F1F5F9;font-weight:700">
+            <td colspan="2">TOTAL ${MESES[arqueoFiltros.mes-1].toUpperCase()}</td>
+            <td style="color:var(--green)">${fmtCLP(totalEntradas)}</td>
+            <td style="color:var(--red)">${fmtCLP(totalSalidas)}</td>
+            <td style="color:${saldoCaja>=0?'var(--green)':'var(--red)'}">
+              ${saldoCaja>=0?'+':''}${fmtCLP(saldoCaja)}
+            </td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table></div>
+      <p style="color:#64748B;font-size:11px;margin-top:8px">💡 Haz clic en una fila para ver el detalle del día</p>`
+    }
+  </div>
+
+  <!-- Detalle completo ventas EF -->
+  <div class="grid-2" style="margin-bottom:16px">
+    <div class="card">
+      <div class="card-title">Ventas EF del mes (${vMes.length})</div>
+      <div style="max-height:320px;overflow-y:auto">
+      <table>
+        <thead><tr><th>Fecha</th><th>Barbero</th><th>Descripción</th><th>Total</th></tr></thead>
+        <tbody>
+          ${vMes.length===0
+            ? '<tr><td colspan="4" style="color:#64748B;text-align:center">Sin ventas EF</td></tr>'
+            : vMes.map(v=>`<tr>
+                <td>${v.fecha}</td>
+                <td>${(v.barbero_nombre||'').split(' ')[0]}</td>
+                <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.servicio_producto||''}</td>
+                <td style="color:var(--green);font-weight:600">${fmtCLP(v.total)}</td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Gastos EF del mes (${gMes.length})</div>
+      <div style="max-height:320px;overflow-y:auto">
+      <table>
+        <thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Monto</th></tr></thead>
+        <tbody>
+          ${gMes.length===0
+            ? '<tr><td colspan="4" style="color:#64748B;text-align:center">Sin gastos EF</td></tr>'
+            : gMes.map(g=>`<tr>
+                <td>${g.fecha}</td>
+                <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.descripcion||''}</td>
+                <td><span class="badge badge-amber">${g.categoria||''}</span></td>
+                <td style="color:var(--red);font-weight:600">${fmtCLP(g.monto)}</td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+  `;
+
+  // Click en fila para expandir detalle
+  diasConSaldo.forEach(d=>{
+    const rows = document.querySelectorAll(`tr`);
+    rows.forEach(tr=>{
+      if(tr.cells && tr.cells[0] && tr.cells[0].textContent.trim()===d.fecha){
+        tr.style.cursor='pointer';
+        tr.onclick=()=>{
+          const det=document.getElementById(`det-${d.fecha}`);
+          if(det) det.style.display = det.style.display==='none'?'table-row':'none';
+        };
+      }
+    });
+  });
+
+  // Registrar bridge helpers
+  window._bridge.arqueoSetAnio = v=>{ arqueoFiltros.anio=Number(v); loadArqueo(); };
+  window._bridge.arqueoSetMes  = v=>{ arqueoFiltros.mes=Number(v);  loadArqueo(); };
+}
+
+function arqueoExportCSV(){
+  // We need to re-query — trigger a download after reload
+  toast('Generando CSV...','info');
+  Promise.all([
+    sb.from('ventas').select('*').eq('forma_pago','EF').eq('anio',arqueoFiltros.anio).eq('n_mes',arqueoFiltros.mes).order('fecha'),
+    sb.from('gastos').select('*').eq('forma_pago','EF').order('fecha'),
+  ]).then(([vRes,gRes])=>{
+    const vMes=(vRes.data||[]);
+    const gMes=(gRes.data||[]).filter(g=>{
+      if(!g.fecha) return false;
+      const [y,m]=g.fecha.split('-');
+      return Number(y)==arqueoFiltros.anio&&Number(m)==arqueoFiltros.mes;
+    });
+    const lines=['Tipo;Fecha;Barbero/Descripcion;Detalle;Monto;Categoria'];
+    vMes.forEach(v=>lines.push(`Entrada;${v.fecha};${v.barbero_nombre||''};${v.servicio_producto||''};${v.total||0};Venta EF`));
+    gMes.forEach(g=>lines.push(`Salida;${g.fecha};;${g.descripcion||''};-${g.monto||0};${g.categoria||''}`));
+    const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;
+    a.download=`arqueo_caja_${MESES[arqueoFiltros.mes-1]}_${arqueoFiltros.anio}.csv`;
+    a.click();
+  });
+}
+
 // ============ BRIDGE ASSIGNMENTS ============
 window._bridge.checkPw=checkPw;
 window._bridge.go=go;
@@ -2217,6 +2502,8 @@ window._bridge.cancelImport=cancelImport;
 window._bridge.concilSetAnio=v=>{concilState.anio=Number(v);renderConciliacion();};
 window._bridge.concilSetMes=v=>{concilState.mes=Number(v);renderConciliacion();};
 window._bridge.runConciliacion=runConciliacion;
+window._bridge.loadArqueo=loadArqueo;
+window._bridge.arqueoExportCSV=arqueoExportCSV;
 window._bridge.dshTab=()=>{};
 
 </script>
