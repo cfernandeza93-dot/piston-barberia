@@ -1711,12 +1711,26 @@ async function processImportFile(input){
 
     } else {
       // CSV
-      const text = await file.text();
+      const buf = await file.arrayBuffer();
+      // Handle BOM (UTF-8 BOM = EF BB BF)
+      let text = new TextDecoder('utf-8').decode(buf);
+      if(text.charCodeAt(0)===0xFEFF) text=text.slice(1); // strip BOM
+
       const lines = text.split(/\r?\n/).filter(l=>l.trim());
       if(lines.length<2){ toast('Archivo vacío','error'); loading.style.display='none'; return; }
       const delim = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
-      const headers = lines[0].split(delim).map(h=>h.trim().replace(/^"|"$/g,''));
-      rows = lines.slice(1).map(line=>{
+
+      // Find the real header row: the first row that contains "Barbero" or "barbero"
+      let headerIdx = 0;
+      for(let i=0;i<Math.min(5,lines.length);i++){
+        const low = lines[i].toLowerCase();
+        if(low.includes('barbero') && (low.includes('fecha') || low.includes('monto'))){
+          headerIdx = i; break;
+        }
+      }
+
+      const headers = lines[headerIdx].split(delim).map(h=>h.trim().replace(/^"|"$/g,''));
+      rows = lines.slice(headerIdx+1).map(line=>{
         const cols=[]; let cur='', inQ=false;
         for(const ch of line){
           if(ch==='"') inQ=!inQ;
@@ -1745,12 +1759,12 @@ async function processImportFile(input){
 }
 
 // ---- helpers ----
-function nH(h){ return String(h||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,''); }
+function nH(h){ return String(h||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,''); }
 
 function getCol(row, ...keys){
   for(const k of keys){
     const nk=nH(k);
-    const found=Object.keys(row).find(rk=>nH(rk)===nk||nH(rk).startsWith(nk));
+    const found=Object.keys(row).find(rk=>nH(rk)===nk||nH(rk).startsWith(nk)||nk.startsWith(nH(rk)));
     if(found!==undefined && row[found]!==null && String(row[found]).trim()!=='') return String(row[found]).trim();
   }
   return '';
@@ -1758,7 +1772,27 @@ function getCol(row, ...keys){
 
 function pNum(v){
   if(v===null||v===undefined||v==='') return 0;
-  const s=String(v).replace(/[$\s]/g,'').replace(/\./g,'').replace(',','.');
+  // Handle Chilean format: $16.000 or $ 16.000 or 16.000 or 16,000
+  // Step 1: remove currency symbol, spaces
+  let s = String(v).replace(/\$/g,'').replace(/\s+/g,'');
+  // Step 2: if dot is used as thousands separator (e.g. 16.000 → 16000)
+  // Detect: if dot exists but no comma, and the part after last dot is exactly 3 digits → thousands dot
+  // Also handles 1.600.000 style
+  if(s.includes('.') && !s.includes(',')){
+    // Check if ALL dots are thousands separators (every group after dot = 3 digits)
+    const parts = s.split('.');
+    const allThousands = parts.slice(1).every(p=>p.length===3&&/^\d+$/.test(p));
+    if(allThousands) s = parts.join(''); // remove all dots → 16000
+    // else treat dot as decimal separator (leave as is)
+  } else if(s.includes(',')&&s.includes('.')){
+    // e.g. 1.600,50 → 1600.50
+    s = s.replace(/\./g,'').replace(',','.');
+  } else if(s.includes(',')){
+    // comma as decimal: 16,000 → could be 16.0 or 16000; assume thousands if 3 digits after comma
+    const afterComma = s.split(',')[1]||'';
+    if(afterComma.length===3&&/^\d+$/.test(afterComma)) s=s.replace(',','');
+    else s=s.replace(',','.');
+  }
   const n=parseFloat(s);
   return isNaN(n)?0:Math.round(n);
 }
