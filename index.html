@@ -599,8 +599,8 @@ function renderVentaForm(){
           <input type="text" id="vNroPedido" placeholder="Ej: 1042">
         </div>
         <div class="form-group">
-          <label>Monto Despacho <span style="color:#94A3B8;font-weight:400">(solo informativo)</span></label>
-          <input type="number" id="vMontoDespacho" value="0" placeholder="0">
+          <label>Monto Despacho</label>
+          <input type="number" id="vMontoDespacho" value="0" placeholder="0" oninput="updateTotal()">
         </div>
       </div>
     </div>
@@ -703,7 +703,8 @@ function updateTotal(){
   }
   const prop=Number(document.getElementById('vPropina')?.value||0);
   const desc=Number(document.getElementById('vDescuento')?.value||0);
-  document.getElementById('totalEstimado').textContent=fmtCLP(monto+prop-desc);
+  const despacho=Number(document.getElementById('vMontoDespacho')?.value||0);
+  document.getElementById('totalEstimado').textContent=fmtCLP(monto+prop-desc+despacho);
 }
 
 function filtrarProductos(){
@@ -834,16 +835,20 @@ async function submitVenta(){
 
   showOverlay();
   let rows=[];
+  const despacho=Number(document.getElementById('vMontoDespacho')?.value||0);
   if(tipo==='servicio'){
     const monto=Number(document.getElementById('vMonto').value||0);
     const svcSel=document.getElementById('vServicio');
     const svc=servicios.find(s=>s.id===svcSel.value);
-    rows.push({...base,tipo:'servicio',servicio_producto:svc?.nombre||'',monto,total:monto+base.propina-base.descuento});
+    rows.push({...base,tipo:'servicio',servicio_producto:svc?.nombre||'',monto,total:monto+base.propina-base.descuento+despacho});
   } else {
     if(cart.length===0){hideOverlay();toast('Agrega productos al carrito','error');return;}
+    // El despacho solo se suma a la primera fila para no duplicar
+    let primerRow=true;
     for(const it of cart){
-      rows.push({...base,tipo:'PRODUCTO',servicio_producto:it.nombre,monto:it.total,total:it.total+base.propina-base.descuento});
-      // descuento stock
+      const totalRow=it.total+base.propina-base.descuento+(primerRow?despacho:0);
+      rows.push({...base,tipo:'PRODUCTO',servicio_producto:it.nombre,monto:it.total,total:totalRow});
+      primerRow=false;
       await sb.from('productos').update({stock:it.stock-it.qty}).eq('id',it.pid);
     }
   }
