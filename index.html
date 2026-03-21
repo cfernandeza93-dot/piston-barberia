@@ -321,9 +321,8 @@ async function loadDashboard(){
     <div class="metric"><div class="metric-label">Propinas</div><div class="metric-value">${fmtCLP(totalPropinas)}</div><div class="metric-sub">${webVentas} ventas web</div></div>
   </div>
 
-  <div class="grid-3" style="margin-bottom:16px">
+  <div class="grid-2" style="margin-bottom:16px">
     <div class="metric"><div class="metric-label">Gastos</div><div class="metric-value" style="color:var(--red)">${fmtCLP(totalGastos)}</div><div class="metric-sub">${gFilt.length} registros</div></div>
-    <div class="metric"><div class="metric-label">Utilidad Bruta</div><div class="metric-value" style="color:${utilidad>=0?'var(--green)':'var(--red)'}">${fmtCLP(utilidad)}</div><div class="metric-sub">Ventas - Gastos</div></div>
     <div class="metric">
       <div class="metric-label">Por Forma de Pago</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
