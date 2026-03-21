@@ -145,9 +145,9 @@ tr:hover td{background:#F8FAFC}
     <button class="tab-btn" onclick="go('gastos')">💸 Gastos</button>
     <button class="tab-btn" onclick="go('conciliacion')">🔄 Conciliación</button>
     <button class="tab-btn" onclick="go('equipo')">👥 Equipo</button>
-    <button class="tab-btn" onclick="go('importar')">📥 Importar</button>
     <button class="tab-btn" onclick="go('arqueo')">🏦 Arqueo Caja</button>
-    <button class="tab-btn" onclick="go('giftcards')">🎁 Gift Cards</button>
+    <!-- <button class="tab-btn" onclick="go('giftcards')">🎁 Gift Cards</button> -->
+    <button class="tab-btn" onclick="go('importar')">📥 Importar</button>
   </div>
   <div class="content" id="mainContent"></div>
 </div>
@@ -231,10 +231,10 @@ function checkPw(){
 function go(tab){
   currentTab=tab;
   document.querySelectorAll('.tab-btn').forEach((b,i)=>{
-    const tabs=['dashboard','venta','historial','inventario','gastos','conciliacion','equipo','importar','arqueo','giftcards'];
+    const tabs=['dashboard','venta','historial','inventario','gastos','conciliacion','equipo','arqueo','importar'];
     b.classList.toggle('active',tabs[i]===tab);
   });
-  const fns={dashboard:loadDashboard,venta:loadVenta,historial:loadHistorial,inventario:loadInventario,gastos:loadGastos,conciliacion:loadConciliacion,equipo:loadEquipo,importar:loadImportar,arqueo:loadArqueo,giftcards:loadGiftCards};
+  const fns={dashboard:loadDashboard,venta:loadVenta,historial:loadHistorial,inventario:loadInventario,gastos:loadGastos,conciliacion:loadConciliacion,equipo:loadEquipo,arqueo:loadArqueo,importar:loadImportar};
   fns[tab]&&fns[tab]();
 }
 
