@@ -1589,7 +1589,20 @@ async function deleteServicio(id){
 
 // ============ IMPORTAR ============
 let importPreview = [];
-let importBarberoMap = {};
+
+// SheetJS loaded on demand
+let XLSX_LIB = null;
+async function getXLSX(){
+  if(XLSX_LIB) return XLSX_LIB;
+  await new Promise((res,rej)=>{
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload=res; s.onerror=rej;
+    document.head.appendChild(s);
+  });
+  XLSX_LIB=window.XLSX;
+  return XLSX_LIB;
+}
 
 function loadImportar(){
   document.getElementById('mainContent').innerHTML=`
@@ -1599,33 +1612,33 @@ function loadImportar(){
     <div style="display:flex;gap:12px;align-items:flex-start">
       <span style="font-size:24px">📋</span>
       <div>
-        <div style="font-weight:600;margin-bottom:4px">Formato esperado — Ventas v3 (CSV)</div>
-        <div style="color:#64748B;font-size:12px;line-height:1.6">
-          El archivo CSV debe tener las columnas del cierre diario oficial.<br>
-          <strong>Columnas reconocidas:</strong> Cod. Autorización · Boleta · Año · N° Mes · Mes · Día · Día semana · Fecha · Barbero · Tipo · Cliente · Servicio/Producto · Monto · Propina · Descuento · Total · Forma Pago · Es Web · Comentarios<br>
-          <strong>Separador:</strong> punto y coma (;) o coma (,) — se detecta automáticamente.<br>
-          <strong>Fechas:</strong> formato DD-MM-YYYY o YYYY-MM-DD.<br>
-          También puedes importar <strong>Gastos</strong> con columnas: Fecha · Descripción · Categoría · Monto · Forma Pago · Notas
+        <div style="font-weight:700;margin-bottom:6px">Formato soportado — Cierre Diario Oficial (XLSX o CSV)</div>
+        <div style="color:#64748B;font-size:12px;line-height:1.8">
+          ✅ <strong>XLSX del Cierre Diario</strong> — lee automáticamente la hoja <strong>"Ventas v3"</strong><br>
+          ✅ <strong>CSV genérico</strong> — con columnas separadas por <code>;</code> o <code>,</code><br>
+          <strong>Columnas detectadas:</strong> Barbero · Cod Autorizacion · N° Boleta · Año · N° Mes · dia · Mes · Día · Fecha · Tipo de Venta · Cliente · servicio/Producto · Monto · Propina · Total · Forma de pago · Comentarios<br>
+          <strong>Normalización automática:</strong> TF→TRF · tipos en mayúscula/minúscula · espacios extra · fechas en cualquier formato
         </div>
       </div>
     </div>
   </div>
 
   <div class="section-card" style="margin-bottom:16px">
-    <div class="card-title">1 · Selecciona el tipo de datos y el archivo</div>
+    <div class="card-title">1 · Selecciona el tipo y el archivo</div>
     <div class="form-row" style="align-items:flex-end">
       <div class="form-group" style="flex:0 0 200px">
         <label>Tipo de importación</label>
         <select id="importTipo">
-          <option value="ventas">Ventas</option>
+          <option value="ventas">Ventas (Ventas v3)</option>
           <option value="gastos">Gastos</option>
         </select>
       </div>
       <div class="form-group">
-        <label>Archivo CSV</label>
-        <input type="file" id="importFile" accept=".csv,.txt" onchange="processImportFile(this)">
+        <label>Archivo XLSX o CSV</label>
+        <input type="file" id="importFile" accept=".xlsx,.xls,.csv,.txt" onchange="processImportFile(this)">
       </div>
     </div>
+    <div id="importLoading" style="display:none;color:#64748B;font-size:12px;margin-top:8px">⏳ Procesando archivo...</div>
   </div>
 
   <div id="importPreviewSection" style="display:none">
@@ -1638,7 +1651,7 @@ function loadImportar(){
     <div class="section-card">
       <div class="card-title">3 · Confirmar importación</div>
       <div id="importConfirmInfo" style="margin-bottom:14px;color:#64748B;font-size:13px"></div>
-      <div style="display:flex;gap:10px">
+      <div style="display:flex;gap:10px" id="importBtns">
         <button class="btn btn-primary" onclick="confirmImport()" style="padding:10px 24px">⬆ Importar al sistema</button>
         <button class="btn btn-ghost" onclick="cancelImport()">Cancelar</button>
       </div>
@@ -1651,325 +1664,343 @@ function loadImportar(){
   `;
 }
 
-function processImportFile(input){
+async function processImportFile(input){
   const file = input.files[0];
   if(!file) return;
   const tipo = document.getElementById('importTipo').value;
-  const reader = new FileReader();
-  reader.onload = function(e){
-    try{
-      const text = e.target.result;
-      const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l);
-      if(lines.length < 2){ toast('Archivo vacío o sin datos','error'); return; }
+  const loading = document.getElementById('importLoading');
+  loading.style.display='block';
+  document.getElementById('importPreviewSection').style.display='none';
 
-      // Auto-detect delimiter
-      const delim = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
+  try {
+    const isXLSX = file.name.match(/\.xlsx?$/i);
+    let rows = [];
 
-      // Parse headers - normalize
-      const rawHeaders = lines[0].split(delim).map(h=>h.trim().replace(/"/g,'').toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g,''));
-      
-      // Parse all rows
-      const rows = lines.slice(1).map(line=>{
-        // Handle quoted fields
-        const cols = [];
-        let cur = '', inQ = false;
-        for(let i=0;i<line.length;i++){
-          const ch = line[i];
-          if(ch==='"'){ inQ=!inQ; }
-          else if(ch===delim && !inQ){ cols.push(cur.trim()); cur=''; }
-          else { cur+=ch; }
-        }
-        cols.push(cur.trim());
-        const obj = {};
-        rawHeaders.forEach((h,i)=>{ obj[h] = (cols[i]||'').replace(/"/g,'').trim(); });
-        return obj;
-      }).filter(r => Object.values(r).some(v=>v)); // remove empty rows
+    if(isXLSX){
+      const XL = await getXLSX();
+      const buf = await file.arrayBuffer();
+      const wb = XL.read(buf, {type:'array', cellDates:true});
 
-      if(rows.length === 0){ toast('No se encontraron datos','error'); return; }
-
-      if(tipo === 'ventas'){
-        importPreview = parseVentasRows(rows, rawHeaders);
-      } else {
-        importPreview = parseGastosRows(rows, rawHeaders);
+      // Find the right sheet
+      let sheetName = wb.SheetNames[0];
+      if(tipo==='ventas'){
+        const v3 = wb.SheetNames.find(n=>n.toLowerCase().includes('venta'));
+        if(v3) sheetName = v3;
       }
 
-      renderImportPreview(tipo);
-    } catch(err){
-      toast('Error al leer archivo: '+err.message,'error');
-      console.error(err);
+      const ws = wb.Sheets[sheetName];
+      // Get all rows as array of arrays (raw, to handle multi-row headers)
+      const raw = XL.utils.sheet_to_json(ws, {header:1, defval:null, raw:false});
+
+      // Find header row: the row that contains "Barbero" and "Fecha"
+      let headerIdx = 0;
+      for(let i=0;i<Math.min(5,raw.length);i++){
+        const row = raw[i].map(c=>String(c||'').toLowerCase());
+        if(row.some(c=>c.includes('barbero')) && row.some(c=>c.includes('fecha'))){
+          headerIdx = i; break;
+        }
+      }
+      const headers = raw[headerIdx].map(h=>String(h||'').trim());
+      // Data rows start after header
+      const dataRaws = raw.slice(headerIdx+1).filter(r=>r.some(c=>c!==null&&String(c).trim()!==''));
+      rows = dataRaws.map(r=>{
+        const obj={};
+        headers.forEach((h,i)=>{ obj[h] = r[i]!=null ? String(r[i]).trim() : ''; });
+        return obj;
+      });
+
+    } else {
+      // CSV
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter(l=>l.trim());
+      if(lines.length<2){ toast('Archivo vacío','error'); loading.style.display='none'; return; }
+      const delim = lines[0].split(';').length > lines[0].split(',').length ? ';' : ',';
+      const headers = lines[0].split(delim).map(h=>h.trim().replace(/^"|"$/g,''));
+      rows = lines.slice(1).map(line=>{
+        const cols=[]; let cur='', inQ=false;
+        for(const ch of line){
+          if(ch==='"') inQ=!inQ;
+          else if(ch===delim&&!inQ){cols.push(cur.trim());cur='';}
+          else cur+=ch;
+        }
+        cols.push(cur.trim());
+        const obj={};
+        headers.forEach((h,i)=>obj[h]=(cols[i]||'').replace(/^"|"$/g,'').trim());
+        return obj;
+      }).filter(r=>Object.values(r).some(v=>v));
     }
-  };
-  reader.readAsText(file, 'UTF-8');
+
+    if(rows.length===0){ toast('No se encontraron datos','error'); loading.style.display='none'; return; }
+
+    await loadCatalogos();
+    importPreview = tipo==='ventas' ? parseVentasRows(rows) : parseGastosRows(rows);
+    loading.style.display='none';
+    renderImportPreview(tipo);
+
+  } catch(err){
+    loading.style.display='none';
+    toast('Error al procesar: '+err.message,'error');
+    console.error(err);
+  }
 }
 
-function normalizeHeader(h){
-  return h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
-}
+// ---- helpers ----
+function nH(h){ return String(h||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,''); }
 
-function findCol(row, ...candidates){
-  for(const c of candidates){
-    const norm = normalizeHeader(c);
-    const key = Object.keys(row).find(k=>normalizeHeader(k)===norm || normalizeHeader(k).includes(norm));
-    if(key && row[key]!==undefined && row[key]!=='') return row[key];
+function getCol(row, ...keys){
+  for(const k of keys){
+    const nk=nH(k);
+    const found=Object.keys(row).find(rk=>nH(rk)===nk||nH(rk).startsWith(nk));
+    if(found!==undefined && row[found]!==null && String(row[found]).trim()!=='') return String(row[found]).trim();
   }
   return '';
 }
 
-function parseNum(v){
-  if(!v) return 0;
-  // Remove currency symbols, dots as thousand separators, convert comma decimal
-  const s = String(v).replace(/[$\s]/g,'').replace(/\./g,'').replace(',','.');
-  const n = parseFloat(s);
+function pNum(v){
+  if(v===null||v===undefined||v==='') return 0;
+  const s=String(v).replace(/[$\s]/g,'').replace(/\./g,'').replace(',','.');
+  const n=parseFloat(s);
   return isNaN(n)?0:Math.round(n);
 }
 
-function parseFecha(v){
-  if(!v) return null;
-  v = v.trim();
-  // YYYY-MM-DD
+function pFecha(v){
+  if(!v||String(v).trim()==='') return null;
+  v=String(v).trim();
+  // Already YYYY-MM-DD
   if(/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  // DD-MM-YYYY or DD/MM/YYYY
-  const m = v.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
-  if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-  // DD-MM-YY
-  const m2 = v.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2})$/);
-  if(m2) return `20${m2[3]}-${m2[2].padStart(2,'0')}-${m2[1].padStart(2,'0')}`;
+  // Excel date string like "2026-01-03T00:00:00.000Z" or "Sat Jan 03 2026..."
+  const iso=v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  // DD/MM/YYYY or DD-MM-YYYY
+  const dmy=v.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if(dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+  // MM/DD/YYYY (US)
+  const mdy=v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(mdy&&Number(mdy[1])<=12) return `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
+  // Date serial (Excel number)
+  const n=Number(v);
+  if(!isNaN(n)&&n>40000&&n<60000){
+    const d=new Date(Math.round((n-25569)*86400*1000));
+    return d.toISOString().split('T')[0];
+  }
   return null;
 }
 
-function parseVentasRows(rows, headers){
-  return rows.map((r,idx)=>{
-    const fechaRaw = findCol(r,'fecha','date');
-    const fecha = parseFecha(fechaRaw);
-    let d = fecha ? new Date(fecha+'T12:00:00') : null;
-
-    // Detect barbero name from various possible column names
-    const barberoNombre = (findCol(r,'barbero','barber','nombre barbero') || '').toUpperCase().trim();
-    
-    // Detect tipo
-    let tipo = (findCol(r,'tipo','type') || 'servicio').toLowerCase().trim();
-    if(tipo.includes('prod')) tipo = 'PRODUCTO';
-    else tipo = 'servicio';
-
-    // Forma pago
-    let fp = (findCol(r,'forma pago','formapago','pago','forma de pago','payment') || 'EF').toUpperCase().trim();
-    if(!['EF','TK','TRF'].includes(fp)){
-      if(fp.includes('EFECT')||fp.includes('CASH')) fp='EF';
-      else if(fp.includes('TARF')||fp.includes('CARD')||fp.includes('DBIT')||fp.includes('CRED')) fp='TK';
-      else if(fp.includes('TRANSF')||fp.includes('TRANSFER')) fp='TRF';
-      else fp='EF';
-    }
-
-    const monto = parseNum(findCol(r,'monto','amount','importe','valor'));
-    const propina = parseNum(findCol(r,'propina','tip','propinas'));
-    const descuento = parseNum(findCol(r,'descuento','discount','desc'));
-    const totalRaw = parseNum(findCol(r,'total'));
-    const total = totalRaw || (monto + propina - descuento);
-
-    const esWebRaw = (findCol(r,'es web','esweb','web','is web')||'').toLowerCase();
-    const esWeb = esWebRaw==='si'||esWebRaw==='sí'||esWebRaw==='true'||esWebRaw==='1'||esWebRaw==='yes';
-
-    // Año/mes from fecha if not in CSV
-    const anio = parseNum(findCol(r,'año','anio','year')) || (d?d.getFullYear():null);
-    const nMes = parseNum(findCol(r,'n° mes','n mes','nmes','mes numero','mes_num','num mes')) || (d?d.getMonth()+1:null);
-    const mesNombre = findCol(r,'mes','month') || (d?MESES[d.getMonth()]:'');
-    const dia = parseNum(findCol(r,'dia','día','day')) || (d?d.getDate():null);
-    const diaSemana = findCol(r,'dia semana','día semana','diasemana','day of week') || (d?DIAS_ES[d.getDay()]:'');
-
-    const errors = [];
-    if(!fecha) errors.push('sin fecha');
-    if(!barberoNombre) errors.push('sin barbero');
-    if(!monto && !total) errors.push('sin monto');
-
-    return {
-      _row: idx+2,
-      _errors: errors,
-      _barberoNombre: barberoNombre,
-      barbero_nombre: barberoNombre,
-      barbero_id: null, // resolved later
-      cod_autorizacion: findCol(r,'cod autorizacion','cod. autorizacion','codautorizacion','autorizacion','num aprobacion','codigo','auth') || null,
-      boleta: findCol(r,'boleta','n° boleta','nboleta','boleta num') || null,
-      anio, n_mes: nMes, mes: mesNombre, dia, dia_semana: diaSemana,
-      fecha, tipo,
-      cliente: findCol(r,'cliente','client','customer') || null,
-      servicio_producto: findCol(r,'servicio producto','servicio/producto','servicio','producto','service','item') || '',
-      monto, propina, descuento, total,
-      forma_pago: fp,
-      es_web: esWeb,
-      comentarios: findCol(r,'comentarios','comments','notas','notes') || null,
-    };
-  });
+function normalizeFP(v){
+  // TF → TRF (used in the Cierre Diario), TK  → TK, EF → EF
+  const s=String(v||'').toUpperCase().trim().replace(/\s+/g,'');
+  if(s==='TF'||s==='TRF'||s.includes('TRANSF')) return 'TRF';
+  if(s==='TK'||s.includes('TARJ')||s.includes('CARD')) return 'TK';
+  return 'EF';
 }
 
-function parseGastosRows(rows, headers){
+function normalizeTipo(v){
+  const s=String(v||'').toLowerCase().trim();
+  return s.includes('prod')?'PRODUCTO':'servicio';
+}
+
+function normalizeDiaSemana(v){
+  // Capitalise and strip accents for display; map to canonical
+  const map={domingo:'Domingo',lunes:'Lunes',martes:'Martes',miercoles:'Miércoles',
+             'miércoles':'Miércoles',jueves:'Jueves',viernes:'Viernes',sabado:'Sábado','sábado':'Sábado'};
+  const k=String(v||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  return map[k]||String(v||'').trim();
+}
+
+function parseVentasRows(rows){
   return rows.map((r,idx)=>{
-    const fechaRaw = findCol(r,'fecha','date');
-    const fecha = parseFecha(fechaRaw);
-    const monto = parseNum(findCol(r,'monto','amount','importe','valor'));
-    const desc = findCol(r,'descripcion','descripción','description','detalle') || '';
-    const errors = [];
+    // === Exact column names from Ventas v3 ===
+    const barberoNombre = (getCol(r,'Barbero') || '').toUpperCase().trim();
+    const fechaRaw = getCol(r,'Fecha','fecha');
+    const fecha = pFecha(fechaRaw);
+    const d = fecha ? new Date(fecha+'T12:00:00') : null;
+
+    const anio   = pNum(getCol(r,'Año','anio')) || (d?d.getFullYear():null);
+    const nMes   = pNum(getCol(r,'N° Mes','nmes','n mes')) || (d?d.getMonth()+1:null);
+    const mesNom = getCol(r,'Mes') || (d?MESES[d.getMonth()]:'');
+    const diaNum = pNum(getCol(r,'dia','día','Día Num')) || (d?d.getDate():null);
+    // "Día" column = dia_semana (sabado, lunes…)
+    const diaSem = normalizeDiaSemana(getCol(r,'Día','Dia semana','dia semana')) || (d?DIAS_ES[d.getDay()]:'');
+
+    const tipo   = normalizeTipo(getCol(r,'Tipo de Venta','tipo','type'));
+    const fp     = normalizeFP(getCol(r,'Forma de pago','forma de pago','forma pago','pago'));
+    const monto  = pNum(getCol(r,'Monto','monto'));
+    const propina= pNum(getCol(r,'Propina','propina'));
+    const desc   = pNum(getCol(r,'Descuento','descuento'));
+    const totalR = pNum(getCol(r,'Total','total'));
+    const total  = totalR || (monto+propina-desc);
+
+    const codAuth= getCol(r,'Cod Autorizacion','Cod. Autorizacion','cod autorizacion','autorizacion') || null;
+    const boleta = getCol(r,'N° Boleta','boleta','n boleta') || null;
+    const cliente= getCol(r,'Cliente','cliente') || null;
+    const svcProd= getCol(r,'servicio/ Producto','servicio/producto','servicio producto','Servicio','Producto') || '';
+    const coment = getCol(r,'Comentarios','comentarios') || null;
+
+    const errors=[];
+    if(!fecha) errors.push('sin fecha');
+    if(!barberoNombre) errors.push('sin barbero');
+    if(!monto&&!total) errors.push('sin monto');
+
+    return {
+      _row:idx+3, _errors:errors, _barberoNombre:barberoNombre,
+      barbero_nombre:barberoNombre, barbero_id:null,
+      cod_autorizacion:codAuth, boleta,
+      anio, n_mes:nMes, mes:mesNom, dia:diaNum, dia_semana:diaSem,
+      fecha, tipo, cliente,
+      servicio_producto:svcProd.trim(),
+      monto, propina, descuento:desc, total,
+      forma_pago:fp, es_web:false, comentarios:coment,
+    };
+  }).filter(r=>r._barberoNombre||r.fecha); // skip truly empty rows
+}
+
+function parseGastosRows(rows){
+  const CATS=['Arriendo','Servicios básicos','Insumos y productos','Equipamiento','Marketing','Sueldos/Comisiones','Anticipos','Mantenimiento','Otro'];
+  return rows.map((r,idx)=>{
+    const fecha=pFecha(getCol(r,'Fecha','fecha'));
+    const monto=pNum(getCol(r,'Monto','monto','importe'));
+    const desc=getCol(r,'Descripcion','descripción','descripcion','detalle')||'';
+    let cat=getCol(r,'Categoria','categoría','categoria')||'Otro';
+    cat=CATS.find(c=>c.toLowerCase()===cat.toLowerCase())||'Otro';
+    const fp=normalizeFP(getCol(r,'Forma de pago','forma pago','pago'));
+    const errors=[];
     if(!fecha) errors.push('sin fecha');
     if(!monto) errors.push('sin monto');
     if(!desc) errors.push('sin descripción');
-    let fp = (findCol(r,'forma pago','formapago','pago','payment')||'EF').toUpperCase().trim();
-    if(!['EF','TK','TRF'].includes(fp)) fp='EF';
-    const CATS=['Arriendo','Servicios básicos','Insumos y productos','Equipamiento','Marketing','Sueldos/Comisiones','Anticipos','Mantenimiento','Otro'];
-    let cat = findCol(r,'categoria','categoría','category') || 'Otro';
-    if(!CATS.map(c=>c.toLowerCase()).includes(cat.toLowerCase())) cat='Otro';
-    else cat = CATS.find(c=>c.toLowerCase()===cat.toLowerCase()) || 'Otro';
     return {
-      _row: idx+2,
-      _errors: errors,
-      fecha, descripcion: desc, categoria: cat, monto,
-      forma_pago: fp,
-      notas: findCol(r,'notas','notes','comentarios') || null,
+      _row:idx+2,_errors:errors,
+      fecha,descripcion:desc,categoria:cat,monto,
+      forma_pago:fp,
+      notas:getCol(r,'Notas','notas','comentarios')||null,
     };
-  });
+  }).filter(r=>r.fecha||r.monto);
 }
 
 function renderImportPreview(tipo){
-  const sec = document.getElementById('importPreviewSection');
-  sec.style.display = 'block';
-  const total = importPreview.length;
-  const errRows = importPreview.filter(r=>r._errors&&r._errors.length>0);
-  const okRows = importPreview.filter(r=>!r._errors||r._errors.length===0);
+  const sec=document.getElementById('importPreviewSection');
+  sec.style.display='block';
+  const total=importPreview.length;
+  const errRows=importPreview.filter(r=>r._errors&&r._errors.length>0);
+  const okRows=importPreview.filter(r=>!r._errors||r._errors.length===0);
 
-  document.getElementById('importStats').innerHTML=`
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <span class="badge badge-blue">📄 Total filas: ${total}</span>
-      <span class="badge badge-green">✓ Válidas: ${okRows.length}</span>
-      ${errRows.length>0?`<span class="badge badge-amber">⚠ Con advertencias: ${errRows.length}</span>`:''}
-    </div>`;
-
-  // Resolve barbero IDs for ventas
+  // Resolve barbero IDs
   if(tipo==='ventas'){
     importPreview.forEach(r=>{
-      if(r._barberoNombre){
-        const b = barberos.find(b=>b.nombre.toUpperCase()===r._barberoNombre.toUpperCase() || 
-                                   b.nombre.toUpperCase().includes(r._barberoNombre.split(' ')[0]) ||
-                                   r._barberoNombre.includes(b.nombre.split(' ')[0].toUpperCase()));
-        if(b){ r.barbero_id=b.id; r.barbero_nombre=b.nombre; }
-        else { if(!r._errors.includes('barbero no encontrado')) r._errors.push('barbero no encontrado: '+r._barberoNombre); }
-      }
+      if(!r._barberoNombre) return;
+      const b=barberos.find(b=>
+        b.nombre.toUpperCase()===r._barberoNombre ||
+        b.nombre.toUpperCase().replace(/\s+/g,' ')===r._barberoNombre.replace(/\s+/g,' ')
+      );
+      if(b){r.barbero_id=b.id;r.barbero_nombre=b.nombre;}
+      else if(!r._errors.find(e=>e.startsWith('barbero'))) r._errors.push('barbero no encontrado: '+r._barberoNombre);
     });
   }
 
-  // Preview table - first 10 rows
-  const preview = importPreview.slice(0,10);
-  let tableHtml = '';
-  if(tipo==='ventas'){
-    tableHtml = `<table>
-      <thead><tr><th>Fila</th><th>Fecha</th><th>Barbero</th><th>Tipo</th><th>Servicio/Producto</th><th>Monto</th><th>Propina</th><th>Total</th><th>Pago</th><th>Estado</th></tr></thead>
-      <tbody>
-      ${preview.map(r=>`<tr style="${r._errors&&r._errors.length?'background:#FFFBEB':''}">
-        <td style="color:#64748B">${r._row}</td>
-        <td>${r.fecha||'—'}</td>
-        <td>${r.barbero_nombre||r._barberoNombre||'—'}</td>
-        <td><span class="badge ${r.tipo==='servicio'?'badge-blue':'badge-green'}">${r.tipo}</span></td>
-        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.servicio_producto||'—'}</td>
-        <td>${fmtCLP(r.monto)}</td>
-        <td>${fmtCLP(r.propina)}</td>
-        <td><strong>${fmtCLP(r.total)}</strong></td>
-        <td><span class="badge ${r.forma_pago==='EF'?'badge-green':r.forma_pago==='TK'?'badge-blue':'badge-purple'}">${r.forma_pago}</span></td>
-        <td>${r._errors&&r._errors.length?`<span class="badge badge-amber" title="${r._errors.join(', ')}">⚠ ${r._errors.join(', ')}</span>`:'<span class="badge badge-green">✓</span>'}</td>
-      </tr>`).join('')}
-      </tbody>
-    </table>`;
-  } else {
-    tableHtml = `<table>
-      <thead><tr><th>Fila</th><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Monto</th><th>Pago</th><th>Estado</th></tr></thead>
-      <tbody>
-      ${preview.map(r=>`<tr style="${r._errors&&r._errors.length?'background:#FFFBEB':''}">
-        <td style="color:#64748B">${r._row}</td>
-        <td>${r.fecha||'—'}</td>
-        <td>${r.descripcion||'—'}</td>
-        <td><span class="badge badge-amber">${r.categoria}</span></td>
-        <td><strong>${fmtCLP(r.monto)}</strong></td>
-        <td>${r.forma_pago}</td>
-        <td>${r._errors&&r._errors.length?`<span class="badge badge-amber">${r._errors.join(', ')}</span>`:'<span class="badge badge-green">✓</span>'}</td>
-      </tr>`).join('')}
-      </tbody>
-    </table>`;
-  }
-  if(importPreview.length>10){
-    tableHtml += `<p style="color:#64748B;font-size:12px;margin-top:8px">... y ${importPreview.length-10} filas más</p>`;
-  }
-  document.getElementById('importPreviewTable').innerHTML = tableHtml;
-
-  // Warnings
-  const noBarb = tipo==='ventas' ? importPreview.filter(r=>!r.barbero_id) : [];
-  let warnHtml = '';
-  if(noBarb.length>0){
-    const nombres = [...new Set(noBarb.map(r=>r._barberoNombre))].filter(Boolean);
-    warnHtml += `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:10px;font-size:12px;margin-bottom:8px">
-      <strong>⚠ Barberos no encontrados en el sistema</strong> (${noBarb.length} filas afectadas): ${nombres.join(', ')}<br>
-      <span style="color:#64748B">Estas filas se importarán sin asociar a un barbero. Puedes editarlas después en Historial.</span>
+  document.getElementById('importStats').innerHTML=`
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <span class="badge badge-blue">📄 ${total} filas leídas</span>
+      <span class="badge badge-green">✓ ${okRows.length} válidas</span>
+      ${errRows.length?`<span class="badge badge-amber">⚠ ${errRows.length} con advertencias</span>`:''}
     </div>`;
-  }
-  document.getElementById('importWarnings').innerHTML = warnHtml;
 
-  const skipped = importPreview.filter(r=>r._errors&&r._errors.includes('sin fecha')&&r._errors.includes('sin monto'));
+  const preview=importPreview.slice(0,10);
+  let tbl='';
+  if(tipo==='ventas'){
+    tbl=`<table><thead><tr><th>#</th><th>Fecha</th><th>Barbero</th><th>Tipo</th><th>Servicio/Producto</th><th>Monto</th><th>Propina</th><th>Total</th><th>Pago</th><th>Estado</th></tr></thead><tbody>
+    ${preview.map(r=>`<tr style="${r._errors.length?'background:#FFFBEB':''}">
+      <td style="color:#64748B">${r._row}</td>
+      <td>${r.fecha||'—'}</td>
+      <td>${r.barbero_nombre||r._barberoNombre||'—'}</td>
+      <td><span class="badge ${r.tipo==='servicio'?'badge-blue':'badge-green'}">${r.tipo}</span></td>
+      <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.servicio_producto}">${r.servicio_producto||'—'}</td>
+      <td>${fmtCLP(r.monto)}</td><td>${fmtCLP(r.propina)}</td>
+      <td><strong>${fmtCLP(r.total)}</strong></td>
+      <td><span class="badge ${r.forma_pago==='EF'?'badge-green':r.forma_pago==='TK'?'badge-blue':'badge-purple'}">${r.forma_pago}</span></td>
+      <td>${r._errors.length?`<span class="badge badge-amber" title="${r._errors.join(', ')}">⚠ ${r._errors[0]}</span>`:'<span class="badge badge-green">✓</span>'}</td>
+    </tr>`).join('')}
+    </tbody></table>`;
+  } else {
+    tbl=`<table><thead><tr><th>#</th><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Monto</th><th>Pago</th><th>Estado</th></tr></thead><tbody>
+    ${preview.map(r=>`<tr style="${r._errors.length?'background:#FFFBEB':''}">
+      <td style="color:#64748B">${r._row}</td>
+      <td>${r.fecha||'—'}</td><td>${r.descripcion||'—'}</td>
+      <td><span class="badge badge-amber">${r.categoria}</span></td>
+      <td><strong>${fmtCLP(r.monto)}</strong></td><td>${r.forma_pago}</td>
+      <td>${r._errors.length?`<span class="badge badge-amber">${r._errors[0]}</span>`:'<span class="badge badge-green">✓</span>'}</td>
+    </tr>`).join('')}
+    </tbody></table>`;
+  }
+  if(importPreview.length>10) tbl+=`<p style="color:#64748B;font-size:12px;margin-top:8px">... y ${importPreview.length-10} filas más no mostradas</p>`;
+  document.getElementById('importPreviewTable').innerHTML=tbl;
+
+  // Warnings box
+  let warn='';
+  if(tipo==='ventas'){
+    const noB=importPreview.filter(r=>!r.barbero_id);
+    if(noB.length){
+      const noms=[...new Set(noB.map(r=>r._barberoNombre))].filter(Boolean);
+      warn+=`<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:10px;font-size:12px">
+        <strong>⚠ Barberos no encontrados (${noB.length} filas):</strong> ${noms.join(', ')}<br>
+        <span style="color:#64748B">Se importarán igual, sin asociar a barbero. Corrígelos después en Historial.</span>
+      </div>`;
+    }
+  }
+  document.getElementById('importWarnings').innerHTML=warn;
+
+  const skip=importPreview.filter(r=>r._errors.includes('sin fecha')&&r._errors.includes('sin monto'));
+  const toImport=total-skip.length;
   document.getElementById('importConfirmInfo').innerHTML=`
-    Se importarán <strong>${okRows.length + errRows.length - skipped.length} registros</strong> de ${tipo} al sistema.
-    ${skipped.length>0?`<span style="color:var(--amber)"> (${skipped.length} filas ignoradas por falta de fecha y monto)</span>`:''}
-    <br><span style="color:#64748B;font-size:12px">⚠ Esta acción no se puede deshacer fácilmente. Asegúrate de que los datos sean correctos.</span>`;
+    Se importarán <strong>${toImport} registros</strong> de ${tipo}.
+    ${skip.length?`<span style="color:var(--amber)"> (${skip.length} filas ignoradas por falta de fecha y monto)</span>`:''}
+    <br><span style="color:#64748B;font-size:12px">⚠ Esta acción insertará los datos. Asegúrate de no duplicar importaciones del mismo período.</span>`;
 }
 
 async function confirmImport(){
-  const tipo = document.getElementById('importTipo').value;
-  // Filter out rows with critical errors (no fecha AND no monto)
-  const toInsert = importPreview.filter(r=>!(r._errors&&r._errors.includes('sin fecha')&&r._errors.includes('sin monto')));
-  if(toInsert.length===0){ toast('No hay datos válidos para importar','error'); return; }
-  if(!confirm(`¿Importar ${toInsert.length} registros de ${tipo}? Esta acción insertará los datos en la base de datos.`)) return;
+  const tipo=document.getElementById('importTipo').value;
+  const toInsert=importPreview.filter(r=>!(r._errors.includes('sin fecha')&&r._errors.includes('sin monto')));
+  if(!toInsert.length){toast('No hay datos válidos','error');return;}
+  if(!confirm(`¿Importar ${toInsert.length} registros de ${tipo}?`)) return;
 
+  document.getElementById('importBtns').style.display='none';
   document.getElementById('importProgress').style.display='block';
-  const fill = document.getElementById('importProgressFill');
-  const txt = document.getElementById('importProgressText');
-  const BATCH = 50;
-  let inserted = 0, errors = 0;
+  const fill=document.getElementById('importProgressFill');
+  const txt=document.getElementById('importProgressText');
 
-  // Clean rows - remove internal fields
-  const cleanRows = toInsert.map(r=>{
-    const clean = {...r};
-    delete clean._row; delete clean._errors; delete clean._barberoNombre;
-    // Ensure nulls for empty strings
-    Object.keys(clean).forEach(k=>{ if(clean[k]==='') clean[k]=null; });
-    return clean;
+  const cleanRows=toInsert.map(r=>{
+    const c={...r};
+    delete c._row; delete c._errors; delete c._barberoNombre;
+    Object.keys(c).forEach(k=>{if(c[k]===''||c[k]===undefined) c[k]=null;});
+    return c;
   });
 
-  for(let i=0; i<cleanRows.length; i+=BATCH){
-    const batch = cleanRows.slice(i, i+BATCH);
-    const {error} = tipo==='ventas'
-      ? await sb.from('ventas').insert(batch)
-      : await sb.from('gastos').insert(batch);
-    if(error){ errors += batch.length; console.error('Batch error:', error); }
-    else inserted += batch.length;
-    const pct = Math.round((i+batch.length)/cleanRows.length*100);
-    fill.style.width = pct+'%';
-    txt.textContent = `Procesando... ${i+batch.length} de ${cleanRows.length} (${pct}%)`;
-    await new Promise(r=>setTimeout(r,50)); // let UI breathe
+  const BATCH=50; let inserted=0, errs=0;
+  for(let i=0;i<cleanRows.length;i+=BATCH){
+    const batch=cleanRows.slice(i,i+BATCH);
+    const {error}=tipo==='ventas'
+      ?await sb.from('ventas').insert(batch)
+      :await sb.from('gastos').insert(batch);
+    if(error){errs+=batch.length;console.error(error);}
+    else inserted+=batch.length;
+    const pct=Math.round((i+batch.length)/cleanRows.length*100);
+    fill.style.width=pct+'%';
+    txt.textContent=`Procesando... ${i+batch.length} / ${cleanRows.length} (${pct}%)`;
+    await new Promise(r=>setTimeout(r,30));
   }
 
   fill.style.width='100%';
-  if(errors===0){
-    txt.textContent = `✓ Importación completada: ${inserted} registros insertados`;
-    txt.style.color = 'var(--green)';
-    toast(`✓ ${inserted} registros importados correctamente`);
+  if(errs===0){
+    txt.textContent=`✓ ¡Listo! ${inserted} registros importados correctamente.`;
+    txt.style.color='var(--green)';
+    toast(`✓ ${inserted} registros importados`);
   } else {
-    txt.textContent = `Completado: ${inserted} OK, ${errors} con error`;
-    txt.style.color = 'var(--amber)';
-    toast(`Importado con errores: ${inserted} OK, ${errors} fallidos`,'error');
+    txt.textContent=`Completado: ${inserted} OK · ${errs} con error`;
+    txt.style.color='var(--amber)';
+    toast(`${inserted} OK, ${errs} errores`,'error');
   }
-  importPreview = [];
-  // Hide confirm button
-  document.querySelector('#importPreviewSection .section-card:last-child .btn-primary').style.display='none';
+  importPreview=[];
 }
 
-function cancelImport(){
-  importPreview=[];
-  loadImportar();
-}
+function cancelImport(){importPreview=[];loadImportar();}
 
 // ============ BRIDGE ASSIGNMENTS ============
 window._bridge.checkPw=checkPw;
