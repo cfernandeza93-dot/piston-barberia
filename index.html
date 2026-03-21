@@ -297,7 +297,25 @@ async function loadDashboard(){
   const ultimas=[...vFilt].sort((a,b)=>new Date(b.fecha)-new Date(a.fecha)).slice(0,10);
 
   // Stock bajo
-  const stockBajo=(productos||[]).filter(p=>p.stock<=p.stock_minimo);
+  const stockBajo=(productos||[]).filter(p=>p.stock<=p.stock_minimo).sort((a,b)=>(a.marca||'').localeCompare(b.marca||''));
+
+  function renderStockBajoTabla(lista){
+    if(!lista.length) return '<p style="color:var(--green);font-size:12px">✓ Todo el stock está bien</p>';
+    return `<div style="max-height:260px;overflow-y:auto">
+      <table>
+        <thead><tr><th>Marca</th><th>Producto</th><th>Categoría</th><th>Stock</th><th>Mín.</th></tr></thead>
+        <tbody>
+          ${lista.map(p=>`<tr>
+            <td><span class="badge badge-gray">${p.marca||'—'}</span></td>
+            <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.nombre}</td>
+            <td style="color:#64748B;font-size:11px">${p.categoria||'—'}</td>
+            <td style="color:var(--red);font-weight:700">${p.stock}</td>
+            <td>${p.stock_minimo}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  }
 
   // Ventas web
   const webVentas=vFilt.filter(v=>v.es_web).length;
@@ -387,21 +405,35 @@ async function loadDashboard(){
       </table>
     </div>
     <div class="card">
-      <div class="card-title">Stock Bajo (≤ mínimo)</div>
-      ${stockBajo.length===0?'<p style="color:var(--green);font-size:12px">✓ Todo el stock está bien</p>':
-      `<table>
-        <thead><tr><th>Producto</th><th>Stock</th><th>Mínimo</th></tr></thead>
-        <tbody>
-          ${stockBajo.map(p=>`<tr>
-            <td>${p.nombre}</td>
-            <td style="color:var(--red);font-weight:700">${p.stock}</td>
-            <td>${p.stock_minimo}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>`}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div class="card-title" style="margin:0">Stock Bajo (≤ mínimo) <span style="font-weight:400;color:#94A3B8">${stockBajo.length}</span></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <select id="dshStockMarca" onchange="window._bridge.dshFiltrarStock()" style="padding:4px 8px;border:1px solid var(--border);border-radius:5px;font-size:11px">
+            <option value="">Todas las marcas</option>
+            ${[...new Set(stockBajo.map(p=>p.marca).filter(Boolean))].sort().map(m=>`<option value="${m}">${m}</option>`).join('')}
+          </select>
+          <select id="dshStockCat" onchange="window._bridge.dshFiltrarStock()" style="padding:4px 8px;border:1px solid var(--border);border-radius:5px;font-size:11px">
+            <option value="">Todas las categorías</option>
+            ${[...new Set(stockBajo.map(p=>p.categoria).filter(Boolean))].sort().map(c=>`<option value="${c}">${c}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div id="dshStockTabla">
+        ${renderStockBajoTabla(stockBajo)}
+      </div>
     </div>
   </div>
   `;
+
+  window._bridge.dshFiltrarStock = () => {
+    const marca = document.getElementById('dshStockMarca')?.value||'';
+    const cat   = document.getElementById('dshStockCat')?.value||'';
+    let lista = stockBajo;
+    if(marca) lista = lista.filter(p=>p.marca===marca);
+    if(cat)   lista = lista.filter(p=>p.categoria===cat);
+    const el = document.getElementById('dshStockTabla');
+    if(el) el.innerHTML = renderStockBajoTabla(lista);
+  };
 
   window._bridge.dshSetAnio=v=>{dshFilters.anio=Number(v);loadDashboard()};
   window._bridge.dshSetMes=v=>{dshFilters.mes=Number(v);loadDashboard()};
