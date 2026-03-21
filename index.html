@@ -1843,32 +1843,32 @@ function normalizeDiaSemana(v){
 
 function parseVentasRows(rows){
   return rows.map((r,idx)=>{
-    // === Exact column names from Ventas v3 ===
-    const barberoNombre = (getCol(r,'Barbero') || '').toUpperCase().trim();
-    const fechaRaw = getCol(r,'Fecha','fecha');
+    // === Compatible con el CSV limpio exportado Y con el XLSX Ventas v3 ===
+    const barberoNombre = (getCol(r,'barbero','Barbero') || '').toUpperCase().trim();
+    const fechaRaw = getCol(r,'fecha','Fecha');
     const fecha = pFecha(fechaRaw);
     const d = fecha ? new Date(fecha+'T12:00:00') : null;
 
-    const anio   = pNum(getCol(r,'Año','anio')) || (d?d.getFullYear():null);
-    const nMes   = pNum(getCol(r,'N° Mes','nmes','n mes')) || (d?d.getMonth()+1:null);
-    const mesNom = getCol(r,'Mes') || (d?MESES[d.getMonth()]:'');
-    const diaNum = pNum(getCol(r,'dia','día','Día Num')) || (d?d.getDate():null);
-    // "Día" column = dia_semana (sabado, lunes…)
-    const diaSem = normalizeDiaSemana(getCol(r,'Día','Dia semana','dia semana')) || (d?DIAS_ES[d.getDay()]:'');
+    // Campos de fecha — vienen pre-calculados en el CSV limpio
+    const anio   = pNum(getCol(r,'anio','Año','año')) || (d?d.getFullYear():null);
+    const nMes   = pNum(getCol(r,'n_mes','N° Mes','nmes')) || (d?d.getMonth()+1:null);
+    const mesNom = getCol(r,'mes','Mes') || (d?MESES[d.getMonth()]:'');
+    const diaNum = pNum(getCol(r,'dia','Día Num')) || (d?d.getDate():null);
+    const diaSem = normalizeDiaSemana(getCol(r,'dia_semana','Día','Dia semana')) || (d?DIAS_ES[d.getDay()]:'');
 
-    const tipo   = normalizeTipo(getCol(r,'Tipo de Venta','tipo','type'));
-    const fp     = normalizeFP(getCol(r,'Forma de pago','forma de pago','forma pago','pago'));
-    const monto  = pNum(getCol(r,'Monto','monto'));
-    const propina= pNum(getCol(r,'Propina','propina'));
-    const desc   = pNum(getCol(r,'Descuento','descuento'));
-    const totalR = pNum(getCol(r,'Total','total'));
+    const tipo   = normalizeTipo(getCol(r,'tipo','Tipo de Venta'));
+    const fp     = normalizeFP(getCol(r,'forma_pago','Forma de pago','Forma pago'));
+    const monto  = pNum(getCol(r,'monto','Monto'));
+    const propina= pNum(getCol(r,'propina','Propina'));
+    const desc   = pNum(getCol(r,'descuento','Descuento'));
+    const totalR = pNum(getCol(r,'total','Total'));
     const total  = totalR || (monto+propina-desc);
 
-    const codAuth= getCol(r,'Cod Autorizacion','Cod. Autorizacion','cod autorizacion','autorizacion') || null;
-    const boleta = getCol(r,'N° Boleta','boleta','n boleta') || null;
-    const cliente= getCol(r,'Cliente','cliente') || null;
-    const svcProd= getCol(r,'servicio/ Producto','servicio/producto','servicio producto','Servicio','Producto') || '';
-    const coment = getCol(r,'Comentarios','comentarios') || null;
+    const codAuth= getCol(r,'cod_autorizacion','Cod Autorizacion','Cod. Autorizacion') || null;
+    const boleta = getCol(r,'boleta','N° Boleta') || null;
+    const cliente= getCol(r,'cliente','Cliente') || null;
+    const svcProd= getCol(r,'servicio_producto','servicio/ Producto','servicio/producto') || '';
+    const coment = getCol(r,'comentarios','Comentarios') || null;
 
     const errors=[];
     if(!fecha) errors.push('sin fecha');
@@ -1876,16 +1876,16 @@ function parseVentasRows(rows){
     if(!monto&&!total) errors.push('sin monto');
 
     return {
-      _row:idx+3, _errors:errors, _barberoNombre:barberoNombre,
+      _row:idx+2, _errors:errors, _barberoNombre:barberoNombre,
       barbero_nombre:barberoNombre, barbero_id:null,
-      cod_autorizacion:codAuth, boleta,
+      cod_autorizacion:codAuth||null, boleta:boleta||null,
       anio, n_mes:nMes, mes:mesNom, dia:diaNum, dia_semana:diaSem,
-      fecha, tipo, cliente,
+      fecha, tipo, cliente:cliente||null,
       servicio_producto:svcProd.trim(),
       monto, propina, descuento:desc, total,
-      forma_pago:fp, es_web:false, comentarios:coment,
+      forma_pago:fp, es_web:false, comentarios:coment||null,
     };
-  }).filter(r=>r._barberoNombre||r.fecha); // skip truly empty rows
+  }).filter(r=>r._barberoNombre||r.fecha);
 }
 
 function parseGastosRows(rows){
