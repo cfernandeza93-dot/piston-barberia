@@ -164,7 +164,7 @@ window._bridge = {};
  'ventaFechaChange','ventaTipoChange','ventaFormaPagoChange','ventaServicioChange',
  'processImportFile','confirmImport','cancelImport',
  'concilSetAnio','concilSetMes','runConciliacion',
- 'arqueoExportCSV'
+ 'arqueoExportCSV','saveSaldoInicial','gastoSetTab'
 ].forEach(fn=>{
   window[fn]=function(){return window._bridge[fn]&&window._bridge[fn](...arguments)};
 });
@@ -1094,156 +1094,291 @@ async function deleteProducto(id){
 // ============ GASTOS ============
 let gastoData=[];
 let editingGastoId=null;
-const CATEGORIAS_GASTO=['Arriendo','Servicios básicos','Insumos y productos','Equipamiento','Marketing','Sueldos/Comisiones','Anticipos','Mantenimiento','Otro'];
+let gastoTabActiva='Adelantos'; // Adelantos | Proveedores | Retiros
 
 async function loadGastos(){
   showOverlay();
+  await loadCatalogos();
   const {data}=await sb.from('gastos').select('*').order('fecha',{ascending:false});
-  gastoData=data||[];hideOverlay();
+  gastoData=data||[];
+  hideOverlay();
   renderGastos();
 }
 
 function renderGastos(){
-  const total=gastoData.reduce((s,g)=>s+(g.monto||0),0);
-  const byCat={};gastoData.forEach(g=>{const c=g.categoria||'Otro';byCat[c]=(byCat[c]||0)+(g.monto||0);});
-  const catOpts=CATEGORIAS_GASTO.map(c=>`<option value="${c}">${c}</option>`).join('');
+  const cats=['Adelantos','Proveedores','Retiros'];
+  const totCat={};
+  cats.forEach(c=>{ totCat[c]=gastoData.filter(g=>g.categoria===c).reduce((s,g)=>s+(g.monto||0),0); });
+  const totalGeneral=Object.values(totCat).reduce((s,v)=>s+v,0);
+  const bOpts=barberos.map(b=>`<option value="${b.nombre}">${b.nombre}</option>`).join('');
+  const filtrados=gastoData.filter(g=>g.categoria===gastoTabActiva);
+
+  // Colores por categoría
+  const catColor={Adelantos:'badge-blue',Proveedores:'badge-amber',Retiros:'badge-red'};
+  const catIcon={Adelantos:'👤',Proveedores:'🏢',Retiros:'💰'};
 
   document.getElementById('mainContent').innerHTML=`
-  <div class="sec-title">Gastos</div>
-  <div class="grid-2" style="margin-bottom:16px">
-    <div class="metric"><div class="metric-label">Total Gastos</div><div class="metric-value" style="color:var(--red)">${fmtCLP(total)}</div><div class="metric-sub">${gastoData.length} registros</div></div>
-    <div class="card">
-      <div class="card-title">Por Categoría</div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px">
-        ${Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([c,m])=>`<span class="badge badge-gray">${c}: ${fmtCLP(m)}</span>`).join('')}
-      </div>
-    </div>
+  <div class="sec-title">Gastos y Movimientos</div>
+
+  <!-- Métricas resumen -->
+  <div class="grid-4" style="margin-bottom:16px">
+    <div class="metric"><div class="metric-label">Total General</div><div class="metric-value" style="color:var(--red)">${fmtCLP(totalGeneral)}</div><div class="metric-sub">${gastoData.length} registros</div></div>
+    ${cats.map(c=>`
+    <div class="metric">
+      <div class="metric-label">${catIcon[c]} ${c}</div>
+      <div class="metric-value" style="font-size:20px;color:var(--red)">${fmtCLP(totCat[c])}</div>
+      <div class="metric-sub">${gastoData.filter(g=>g.categoria===c).length} registros</div>
+    </div>`).join('')}
   </div>
 
-  <div class="section-card" style="margin-bottom:16px">
-    <div class="card-title">Nuevo Gasto</div>
-    <div class="form-row">
-      <div class="form-group"><label>Descripción</label><input type="text" id="gDesc" placeholder="Descripción del gasto"></div>
-      <div class="form-group" style="flex:0 0 160px"><label>Monto</label><input type="number" id="gMonto" placeholder="0"></div>
-      <div class="form-group"><label>Categoría</label><select id="gCat">${catOpts}</select></div>
-    </div>
+  <!-- Tabs de categoría -->
+  <div style="display:flex;gap:0;margin-bottom:0;border-bottom:2px solid var(--border)">
+    ${cats.map(c=>`
+    <button onclick="window._bridge.gastoSetTab('${c}')"
+      style="padding:10px 24px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;
+             color:${gastoTabActiva===c?'var(--blue)':'#64748B'};
+             border-bottom:${gastoTabActiva===c?'2px solid var(--blue)':'2px solid transparent'};
+             margin-bottom:-2px;transition:.15s">
+      ${catIcon[c]} ${c}
+      <span style="margin-left:6px;background:${gastoTabActiva===c?'#DBEAFE':'#F1F5F9'};color:${gastoTabActiva===c?'var(--blue)':'#64748B'};border-radius:99px;padding:1px 8px;font-size:11px">
+        ${gastoData.filter(g=>g.categoria===c).length}
+      </span>
+    </button>`).join('')}
+  </div>
+
+  <!-- Formulario según categoría activa -->
+  <div class="section-card" style="margin-top:16px;margin-bottom:16px">
+    <div class="card-title">Nuevo registro — ${gastoTabActiva}</div>
+    ${gastoTabActiva==='Adelantos'?`
     <div class="form-row">
       <div class="form-group" style="flex:0 0 160px"><label>Fecha</label><input type="date" id="gFecha" value="${today()}"></div>
       <div class="form-group">
-        <label>Forma de Pago</label>
-        <select id="gPago"><option value="EF">EF - Efectivo</option><option value="TK">TK - Tarjeta</option><option value="TRF">TRF - Transferencia</option></select>
+        <label>Barbero</label>
+        <select id="gBarbero"><option value="">-- Seleccionar --</option>${bOpts}</select>
       </div>
-      <div class="form-group"><label>Notas</label><input type="text" id="gNotas" placeholder="Notas adicionales"></div>
+      <div class="form-group" style="flex:0 0 160px"><label>Monto</label><input type="number" id="gMonto" placeholder="0"></div>
       <div class="form-group" style="justify-content:flex-end;align-items:flex-end">
         <button class="btn btn-primary" onclick="saveGasto()">+ Registrar</button>
       </div>
     </div>
+    `:gastoTabActiva==='Proveedores'?`
+    <div class="form-row">
+      <div class="form-group" style="flex:0 0 160px"><label>Fecha</label><input type="date" id="gFecha" value="${today()}"></div>
+      <div class="form-group"><label>Nombre Proveedor</label><input type="text" id="gProveedor" placeholder="Nombre del proveedor"></div>
+      <div class="form-group">
+        <label>Tipo Documento</label>
+        <select id="gTipoDoc">
+          <option value="Boleta">Boleta</option>
+          <option value="Factura">Factura</option>
+          <option value="Comprobante">Comprobante</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:0 0 150px"><label>Monto</label><input type="number" id="gMonto" placeholder="0"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Detalle</label><input type="text" id="gDetalle" placeholder="Descripción de la compra"></div>
+      <div class="form-group" style="justify-content:flex-end;align-items:flex-end">
+        <button class="btn btn-primary" onclick="saveGasto()">+ Registrar</button>
+      </div>
+    </div>
+    `:`
+    <div class="form-row">
+      <div class="form-group" style="flex:0 0 160px"><label>Fecha</label><input type="date" id="gFecha" value="${today()}"></div>
+      <div class="form-group" style="flex:0 0 160px"><label>Monto</label><input type="number" id="gMonto" placeholder="0"></div>
+      <div class="form-group"><label>Detalle <span style="color:#94A3B8;font-weight:400">(opcional)</span></label><input type="text" id="gDetalle" placeholder="Motivo del retiro"></div>
+      <div class="form-group" style="justify-content:flex-end;align-items:flex-end">
+        <button class="btn btn-primary" onclick="saveGasto()">+ Registrar</button>
+      </div>
+    </div>
+    `}
   </div>
 
+  <!-- Tabla de registros filtrados -->
   <div class="card" style="overflow-x:auto">
+    ${gastoTabActiva==='Adelantos'?`
     <table>
-      <thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Monto</th><th>Pago</th><th>Notas</th><th>Acciones</th></tr></thead>
+      <thead><tr><th>Fecha</th><th>Barbero</th><th>Monto</th><th>Acciones</th></tr></thead>
       <tbody>
-        ${gastoData.map(g=>renderGastoRow(g,catOpts)).join('')}
+        ${filtrados.length===0?'<tr><td colspan="4" style="color:#64748B;text-align:center;padding:20px">Sin adelantos registrados</td></tr>':
+          filtrados.map(g=>renderGastoRowAdelantos(g,bOpts)).join('')}
       </tbody>
     </table>
+    `:gastoTabActiva==='Proveedores'?`
+    <table>
+      <thead><tr><th>Fecha</th><th>Proveedor</th><th>Tipo Doc.</th><th>Monto</th><th>Detalle</th><th>Acciones</th></tr></thead>
+      <tbody>
+        ${filtrados.length===0?'<tr><td colspan="6" style="color:#64748B;text-align:center;padding:20px">Sin proveedores registrados</td></tr>':
+          filtrados.map(g=>renderGastoRowProveedores(g)).join('')}
+      </tbody>
+    </table>
+    `:`
+    <table>
+      <thead><tr><th>Fecha</th><th>Monto</th><th>Detalle</th><th>Acciones</th></tr></thead>
+      <tbody>
+        ${filtrados.length===0?'<tr><td colspan="4" style="color:#64748B;text-align:center;padding:20px">Sin retiros registrados</td></tr>':
+          filtrados.map(g=>renderGastoRowRetiros(g)).join('')}
+      </tbody>
+    </table>
+    `}
   </div>`;
+
+  window._bridge.gastoSetTab=v=>{gastoTabActiva=v;renderGastos();};
 }
 
-function renderGastoRow(g,catOpts){
+// ---- Render rows por categoría ----
+function renderGastoRowAdelantos(g, bOpts){
   const isEditing=editingGastoId===g.id;
-  const cls=isEditing?'row-editing':'';
-  return `<tr id="grow-${g.id}" class="${cls}">
+  return `<tr id="grow-${g.id}" class="${isEditing?'row-editing':''}">
     <td>
       <span class="view-cell">${g.fecha||''}</span>
       <span class="edit-cell"><input type="date" id="ge-fecha-${g.id}" value="${g.fecha||''}"></span>
     </td>
     <td>
-      <span class="view-cell">${g.descripcion||''}</span>
-      <span class="edit-cell"><input type="text" id="ge-desc-${g.id}" value="${(g.descripcion||'').replace(/"/g,'&quot;')}"></span>
+      <span class="view-cell"><span class="badge badge-blue">${g.barbero_nombre||''}</span></span>
+      <span class="edit-cell"><select id="ge-barbero-${g.id}">${bOpts}</select></span>
     </td>
     <td>
-      <span class="view-cell"><span class="badge badge-amber">${g.categoria||''}</span></span>
-      <span class="edit-cell"><select id="ge-cat-${g.id}">${catOpts}</select></span>
+      <span class="view-cell"><strong style="color:var(--red)">${fmtCLP(g.monto)}</strong></span>
+      <span class="edit-cell"><input type="number" id="ge-monto-${g.id}" value="${g.monto||0}" style="width:100px"></span>
     </td>
-    <td>
-      <span class="view-cell"><strong>${fmtCLP(g.monto)}</strong></span>
-      <span class="edit-cell"><input type="number" id="ge-monto-${g.id}" value="${g.monto||0}" style="width:90px"></span>
-    </td>
-    <td>
-      <span class="view-cell"><span class="badge ${g.forma_pago==='EF'?'badge-green':g.forma_pago==='TK'?'badge-blue':'badge-purple'}">${g.forma_pago||''}</span></span>
-      <span class="edit-cell"><select id="ge-pago-${g.id}"><option value="EF">EF</option><option value="TK">TK</option><option value="TRF">TRF</option></select></span>
-    </td>
-    <td>
-      <span class="view-cell">${g.notas||''}</span>
-      <span class="edit-cell"><input type="text" id="ge-notas-${g.id}" value="${(g.notas||'').replace(/"/g,'&quot;')}"></span>
-    </td>
-    <td style="white-space:nowrap">
-      ${isEditing?
-        `<button class="btn btn-success btn-sm" onclick="saveEditGasto('${g.id}')">✓</button>
-         <button class="btn btn-ghost btn-sm" onclick="cancelEditGasto()">✕</button>`:
-        `<button class="btn btn-ghost btn-sm" onclick="startEditGasto('${g.id}')">✏</button>
-         <button class="btn btn-danger btn-sm" onclick="deleteGasto('${g.id}')">🗑</button>`}
-    </td>
+    <td style="white-space:nowrap">${gastoAcciones(g.id,isEditing)}</td>
   </tr>`;
 }
 
+function renderGastoRowProveedores(g){
+  const isEditing=editingGastoId===g.id;
+  const tipoOpts=['Boleta','Factura','Comprobante'].map(t=>`<option value="${t}" ${g.tipo_documento===t?'selected':''}>${t}</option>`).join('');
+  const tipoColor={Boleta:'badge-green',Factura:'badge-blue',Comprobante:'badge-gray'};
+  return `<tr id="grow-${g.id}" class="${isEditing?'row-editing':''}">
+    <td>
+      <span class="view-cell">${g.fecha||''}</span>
+      <span class="edit-cell"><input type="date" id="ge-fecha-${g.id}" value="${g.fecha||''}"></span>
+    </td>
+    <td>
+      <span class="view-cell"><strong>${g.nombre_proveedor||''}</strong></span>
+      <span class="edit-cell"><input type="text" id="ge-prov-${g.id}" value="${(g.nombre_proveedor||'').replace(/"/g,'&quot;')}"></span>
+    </td>
+    <td>
+      <span class="view-cell"><span class="badge ${tipoColor[g.tipo_documento]||'badge-gray'}">${g.tipo_documento||''}</span></span>
+      <span class="edit-cell"><select id="ge-tipodoc-${g.id}">${tipoOpts}</select></span>
+    </td>
+    <td>
+      <span class="view-cell"><strong style="color:var(--red)">${fmtCLP(g.monto)}</strong></span>
+      <span class="edit-cell"><input type="number" id="ge-monto-${g.id}" value="${g.monto||0}" style="width:100px"></span>
+    </td>
+    <td>
+      <span class="view-cell" style="max-width:180px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.detalle||''}</span>
+      <span class="edit-cell"><input type="text" id="ge-detalle-${g.id}" value="${(g.detalle||'').replace(/"/g,'&quot;')}"></span>
+    </td>
+    <td style="white-space:nowrap">${gastoAcciones(g.id,isEditing)}</td>
+  </tr>`;
+}
+
+function renderGastoRowRetiros(g){
+  const isEditing=editingGastoId===g.id;
+  return `<tr id="grow-${g.id}" class="${isEditing?'row-editing':''}">
+    <td>
+      <span class="view-cell">${g.fecha||''}</span>
+      <span class="edit-cell"><input type="date" id="ge-fecha-${g.id}" value="${g.fecha||''}"></span>
+    </td>
+    <td>
+      <span class="view-cell"><strong style="color:var(--red)">${fmtCLP(g.monto)}</strong></span>
+      <span class="edit-cell"><input type="number" id="ge-monto-${g.id}" value="${g.monto||0}" style="width:100px"></span>
+    </td>
+    <td>
+      <span class="view-cell" style="color:#64748B">${g.detalle||'—'}</span>
+      <span class="edit-cell"><input type="text" id="ge-detalle-${g.id}" value="${(g.detalle||'').replace(/"/g,'&quot;')}"></span>
+    </td>
+    <td style="white-space:nowrap">${gastoAcciones(g.id,isEditing)}</td>
+  </tr>`;
+}
+
+function gastoAcciones(id,isEditing){
+  return isEditing
+    ?`<button class="btn btn-success btn-sm" onclick="saveEditGasto('${id}')">✓</button>
+      <button class="btn btn-ghost btn-sm" onclick="cancelEditGasto()">✕</button>`
+    :`<button class="btn btn-ghost btn-sm" onclick="startEditGasto('${id}')">✏</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteGasto('${id}')">🗑</button>`;
+}
+
 function startEditGasto(id){
-  editingGastoId=id;renderGastos();
-  const g=gastoData.find(x=>x.id===id);if(!g) return;
+  editingGastoId=id; renderGastos();
+  const g=gastoData.find(x=>x.id===id); if(!g) return;
   setTimeout(()=>{
-    const cs=document.getElementById(`ge-cat-${id}`);if(cs) cs.value=g.categoria||'Otro';
-    const ps=document.getElementById(`ge-pago-${id}`);if(ps) ps.value=g.forma_pago||'EF';
+    const bs=document.getElementById(`ge-barbero-${id}`); if(bs) bs.value=g.barbero_nombre||'';
   },0);
 }
-function cancelEditGasto(){editingGastoId=null;renderGastos();}
+function cancelEditGasto(){editingGastoId=null; renderGastos();}
 
 async function saveGasto(){
-  const obj={
-    descripcion:document.getElementById('gDesc').value,
-    monto:Number(document.getElementById('gMonto').value||0),
-    categoria:document.getElementById('gCat').value,
-    fecha:document.getElementById('gFecha').value,
-    forma_pago:document.getElementById('gPago').value,
-    notas:document.getElementById('gNotas').value||null,
-  };
-  if(!obj.descripcion){toast('Ingresa una descripción','error');return;}
+  const fecha=document.getElementById('gFecha')?.value;
+  const monto=Number(document.getElementById('gMonto')?.value||0);
+  if(!fecha){toast('Ingresa la fecha','error');return;}
+  if(!monto){toast('Ingresa el monto','error');return;}
+
+  let obj={fecha, monto, categoria:gastoTabActiva, forma_pago:'EF'};
+
+  if(gastoTabActiva==='Adelantos'){
+    const barb=document.getElementById('gBarbero')?.value;
+    if(!barb){toast('Selecciona el barbero','error');return;}
+    obj.barbero_nombre=barb;
+    obj.descripcion=`Adelanto – ${barb}`;
+  } else if(gastoTabActiva==='Proveedores'){
+    const prov=document.getElementById('gProveedor')?.value;
+    if(!prov){toast('Ingresa el nombre del proveedor','error');return;}
+    obj.nombre_proveedor=prov;
+    obj.tipo_documento=document.getElementById('gTipoDoc')?.value;
+    obj.detalle=document.getElementById('gDetalle')?.value||null;
+    obj.descripcion=prov;
+  } else {
+    // Retiros
+    obj.detalle=document.getElementById('gDetalle')?.value||null;
+    obj.descripcion=obj.detalle||'Retiro';
+  }
+
   showOverlay();
   const {error}=await sb.from('gastos').insert(obj);
   hideOverlay();
   if(error){toast('Error: '+error.message,'error');return;}
-  toast('✓ Gasto registrado');
+  toast('✓ Registrado');
   loadGastos();
 }
 
 async function saveEditGasto(id){
+  const g=gastoData.find(x=>x.id===id); if(!g) return;
   const updates={
-    descripcion:document.getElementById(`ge-desc-${id}`)?.value,
-    monto:Number(document.getElementById(`ge-monto-${id}`)?.value||0),
-    categoria:document.getElementById(`ge-cat-${id}`)?.value,
     fecha:document.getElementById(`ge-fecha-${id}`)?.value,
-    forma_pago:document.getElementById(`ge-pago-${id}`)?.value,
-    notas:document.getElementById(`ge-notas-${id}`)?.value||null,
+    monto:Number(document.getElementById(`ge-monto-${id}`)?.value||0),
   };
+  if(g.categoria==='Adelantos'){
+    const bv=document.getElementById(`ge-barbero-${id}`)?.value;
+    updates.barbero_nombre=bv;
+    updates.descripcion=`Adelanto – ${bv}`;
+  } else if(g.categoria==='Proveedores'){
+    updates.nombre_proveedor=document.getElementById(`ge-prov-${id}`)?.value||null;
+    updates.tipo_documento=document.getElementById(`ge-tipodoc-${id}`)?.value||null;
+    updates.detalle=document.getElementById(`ge-detalle-${id}`)?.value||null;
+    updates.descripcion=updates.nombre_proveedor||'Proveedor';
+  } else {
+    updates.detalle=document.getElementById(`ge-detalle-${id}`)?.value||null;
+    updates.descripcion=updates.detalle||'Retiro';
+  }
   showOverlay();
   const {error}=await sb.from('gastos').update(updates).eq('id',id);
   if(error){hideOverlay();toast('Error: '+error.message,'error');return;}
   editingGastoId=null;
   const {data}=await sb.from('gastos').select('*').order('fecha',{ascending:false});
-  gastoData=data||[];hideOverlay();
-  toast('✓ Gasto actualizado');
-  renderGastos();
+  gastoData=data||[]; hideOverlay();
+  toast('✓ Actualizado'); renderGastos();
 }
 
 async function deleteGasto(id){
-  if(!confirm('¿Eliminar gasto?')) return;
+  if(!confirm('¿Eliminar registro?')) return;
   showOverlay();
   const {error}=await sb.from('gastos').delete().eq('id',id);
-  hideOverlay();
-  if(error){toast('Error: '+error.message,'error');return;}
+  hideOverlay(); if(error){toast('Error: '+error.message,'error');return;}
   gastoData=gastoData.filter(g=>g.id!==id);
-  toast('✓ Gasto eliminado');
-  renderGastos();
+  toast('✓ Eliminado'); renderGastos();
 }
 
 // ============ CONCILIACIÓN ============
@@ -2168,70 +2303,56 @@ function cancelImport(){importPreview=[];loadImportar();}
 
 // ============ ARQUEO DE CAJA ============
 let arqueoFiltros = { anio: new Date().getFullYear(), mes: new Date().getMonth()+1 };
+let arqueoSaldoInicial = 0;
 
 async function loadArqueo(){
   showOverlay();
-  const [vRes, gRes] = await Promise.all([
+  const [vRes, gRes, sRes] = await Promise.all([
     sb.from('ventas').select('*').eq('forma_pago','EF').order('fecha').order('created_at'),
     sb.from('gastos').select('*').eq('forma_pago','EF').order('fecha').order('created_at'),
+    sb.from('caja_saldo_inicial').select('*').eq('anio', arqueoFiltros.anio).eq('mes', arqueoFiltros.mes).maybeSingle(),
   ]);
+  arqueoSaldoInicial = sRes.data?.monto || 0;
   hideOverlay();
-  const ventas  = vRes.data||[];
-  const gastos  = gRes.data||[];
-  renderArqueo(ventas, gastos);
+  renderArqueo(vRes.data||[], gRes.data||[]);
 }
 
 function renderArqueo(ventas, gastos){
-  // Años disponibles
   const aniosV = ventas.map(v=>v.anio).filter(Boolean);
   const aniosG = gastos.map(g=>g.fecha?Number(g.fecha.split('-')[0]):null).filter(Boolean);
   const anios  = [...new Set([...aniosV,...aniosG])].sort((a,b)=>b-a);
   if(!anios.length) anios.push(new Date().getFullYear());
   if(!anios.includes(arqueoFiltros.anio)) arqueoFiltros.anio = anios[0];
 
-  // Filter by selected month/year
   const vMes = ventas.filter(v=>v.anio==arqueoFiltros.anio && v.n_mes==arqueoFiltros.mes);
   const gMes = gastos.filter(g=>{
     if(!g.fecha) return false;
-    const [y,m] = g.fecha.split('-');
+    const [y,m]=g.fecha.split('-');
     return Number(y)==arqueoFiltros.anio && Number(m)==arqueoFiltros.mes;
   });
 
-  // ---- Métricas globales ----
   const totalEntradas = vMes.reduce((s,v)=>s+(v.total||0),0);
   const totalSalidas  = gMes.reduce((s,g)=>s+(g.monto||0),0);
-  const saldoCaja     = totalEntradas - totalSalidas;
+  const saldoFinal    = arqueoSaldoInicial + totalEntradas - totalSalidas;
 
-  // Entradas por tipo de venta
   const entradasSvc  = vMes.filter(v=>v.tipo==='servicio').reduce((s,v)=>s+(v.total||0),0);
   const entradasProd = vMes.filter(v=>v.tipo==='PRODUCTO').reduce((s,v)=>s+(v.total||0),0);
   const propinasEF   = vMes.reduce((s,v)=>s+(v.propina||0),0);
 
-  // Salidas por categoría
-  const byCat = {};
+  const byCat={};
   gMes.forEach(g=>{ const c=g.categoria||'Otro'; byCat[c]=(byCat[c]||0)+(g.monto||0); });
 
-  // ---- Movimientos por día ----
-  const diasMap = {}; // fecha -> { entradas:[], salidas:[] }
-  vMes.forEach(v=>{
-    if(!v.fecha) return;
-    if(!diasMap[v.fecha]) diasMap[v.fecha]={entradas:[],salidas:[]};
-    diasMap[v.fecha].entradas.push(v);
-  });
-  gMes.forEach(g=>{
-    if(!g.fecha) return;
-    if(!diasMap[g.fecha]) diasMap[g.fecha]={entradas:[],salidas:[]};
-    diasMap[g.fecha].salidas.push(g);
-  });
-  const diasOrdenados = Object.keys(diasMap).sort();
+  // Movimientos día a día
+  const diasMap={};
+  vMes.forEach(v=>{ if(!v.fecha) return; if(!diasMap[v.fecha]) diasMap[v.fecha]={e:[],s:[]}; diasMap[v.fecha].e.push(v); });
+  gMes.forEach(g=>{ if(!g.fecha) return; if(!diasMap[g.fecha]) diasMap[g.fecha]={e:[],s:[]}; diasMap[g.fecha].s.push(g); });
 
-  // Saldo acumulado por día
-  let acum = 0;
-  const diasConSaldo = diasOrdenados.map(fecha=>{
-    const e = diasMap[fecha].entradas.reduce((s,v)=>s+(v.total||0),0);
-    const s = diasMap[fecha].salidas.reduce((s,g)=>s+(g.monto||0),0);
-    acum += e - s;
-    return { fecha, entradas:diasMap[fecha].entradas, salidas:diasMap[fecha].salidas, totalE:e, totalS:s, saldoDia:e-s, saldoAcum:acum };
+  let acum = arqueoSaldoInicial;
+  const diasConSaldo = Object.keys(diasMap).sort().map(fecha=>{
+    const totalE = diasMap[fecha].e.reduce((s,v)=>s+(v.total||0),0);
+    const totalS = diasMap[fecha].s.reduce((s,g)=>s+(g.monto||0),0);
+    acum += totalE - totalS;
+    return { fecha, e:diasMap[fecha].e, s:diasMap[fecha].s, totalE, totalS, saldoDia:totalE-totalS, saldoAcum:acum };
   });
 
   const anioOpts = anios.map(a=>`<option value="${a}" ${arqueoFiltros.anio==a?'selected':''}>${a}</option>`).join('');
@@ -2240,17 +2361,31 @@ function renderArqueo(ventas, gastos){
   document.getElementById('mainContent').innerHTML=`
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap">
     <span class="sec-title" style="margin:0">🏦 Arqueo de Caja — Efectivo</span>
-    <select onchange="window._bridge.arqueoSetAnio(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">
-      ${anioOpts}
-    </select>
-    <select onchange="window._bridge.arqueoSetMes(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">
-      ${mesOpts}
-    </select>
-    <span style="font-size:12px;color:#64748B;margin-left:4px">${MESES[arqueoFiltros.mes-1]} ${arqueoFiltros.anio}</span>
+    <select onchange="window._bridge.arqueoSetAnio(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">${anioOpts}</select>
+    <select onchange="window._bridge.arqueoSetMes(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">${mesOpts}</select>
+    <span style="font-size:12px;color:#64748B">${MESES[arqueoFiltros.mes-1]} ${arqueoFiltros.anio}</span>
     <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="arqueoExportCSV()">⬇ Exportar CSV</button>
   </div>
 
-  <!-- Métricas principales -->
+  <!-- Saldo inicial del mes -->
+  <div class="section-card" style="margin-bottom:16px;border-left:4px solid var(--blue)">
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.3px">Saldo Inicial del Mes</div>
+        <div style="font-size:22px;font-weight:700;color:var(--blue)">${fmtCLP(arqueoSaldoInicial)}</div>
+        <div style="font-size:11px;color:#94A3B8">Efectivo en caja al inicio de ${MESES[arqueoFiltros.mes-1]}</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+        <input type="number" id="saldoInicialInput" value="${arqueoSaldoInicial}" placeholder="0"
+          style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:140px">
+        <input type="text" id="saldoInicialNotas" placeholder="Notas (opcional)"
+          style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:180px">
+        <button class="btn btn-primary btn-sm" onclick="saveSaldoInicial()">Guardar saldo inicial</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Métricas -->
   <div class="grid-4" style="margin-bottom:16px">
     <div class="metric">
       <div class="metric-label">💵 Entradas EF</div>
@@ -2260,12 +2395,12 @@ function renderArqueo(ventas, gastos){
     <div class="metric">
       <div class="metric-label">💸 Salidas EF</div>
       <div class="metric-value" style="color:var(--red)">${fmtCLP(totalSalidas)}</div>
-      <div class="metric-sub">${gMes.length} gastos</div>
+      <div class="metric-sub">${gMes.length} movimientos</div>
     </div>
     <div class="metric">
-      <div class="metric-label">🏦 Saldo en Caja</div>
-      <div class="metric-value" style="color:${saldoCaja>=0?'var(--green)':'var(--red)'}; font-size:22px">${fmtCLP(saldoCaja)}</div>
-      <div class="metric-sub">Entradas − Salidas</div>
+      <div class="metric-label">🏦 Saldo Final en Caja</div>
+      <div class="metric-value" style="color:${saldoFinal>=0?'var(--green)':'var(--red)'};font-size:20px">${fmtCLP(saldoFinal)}</div>
+      <div class="metric-sub">Inicial + Entradas − Salidas</div>
     </div>
     <div class="metric">
       <div class="metric-label">Desglose entradas</div>
@@ -2277,7 +2412,7 @@ function renderArqueo(ventas, gastos){
     </div>
   </div>
 
-  <!-- Desglose salidas por categoría -->
+  <!-- Salidas por categoría -->
   ${Object.keys(byCat).length>0?`
   <div class="card" style="margin-bottom:16px">
     <div class="card-title">Salidas por Categoría</div>
@@ -2294,8 +2429,8 @@ function renderArqueo(ventas, gastos){
   <div class="card" style="margin-bottom:16px">
     <div class="card-title">Movimientos Día a Día</div>
     ${diasConSaldo.length===0
-      ? '<p style="color:#64748B;text-align:center;padding:20px">Sin movimientos en efectivo para este período</p>'
-      : `<div style="overflow-x:auto"><table>
+      ?'<p style="color:#64748B;text-align:center;padding:20px">Sin movimientos en efectivo para este período</p>'
+      :`<div style="overflow-x:auto"><table>
         <thead><tr>
           <th>Fecha</th><th>Día</th>
           <th style="color:var(--green)">Entradas EF</th>
@@ -2304,150 +2439,142 @@ function renderArqueo(ventas, gastos){
           <th>Saldo Acumulado</th>
         </tr></thead>
         <tbody>
+          <!-- Fila saldo inicial -->
+          <tr style="background:#EFF6FF;font-style:italic">
+            <td colspan="2" style="color:var(--blue);font-weight:600">Saldo inicial</td>
+            <td>—</td><td>—</td><td>—</td>
+            <td style="font-weight:700;color:var(--blue)">${fmtCLP(arqueoSaldoInicial)}</td>
+          </tr>
           ${diasConSaldo.map(d=>`
-          <tr>
+          <tr id="drow-${d.fecha}" style="cursor:pointer" onclick="window._bridge.arqueoToggleDet('${d.fecha}')">
             <td><strong>${d.fecha}</strong></td>
-            <td style="color:#64748B">${d.entradas[0]?.dia_semana||d.salidas[0]?.fecha?new Date(d.fecha+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short'}):''}</td>
+            <td style="color:#64748B">${new Date(d.fecha+'T12:00:00').toLocaleDateString('es-CL',{weekday:'short'})}</td>
             <td style="color:var(--green);font-weight:600">${d.totalE>0?fmtCLP(d.totalE):'—'}</td>
             <td style="color:var(--red);font-weight:600">${d.totalS>0?fmtCLP(d.totalS):'—'}</td>
-            <td>
-              <span style="font-weight:700;color:${d.saldoDia>=0?'var(--green)':'var(--red)'}">
-                ${d.saldoDia>=0?'+':''}${fmtCLP(d.saldoDia)}
-              </span>
-            </td>
-            <td>
-              <span style="font-weight:700;color:${d.saldoAcum>=0?'#1E293B':'var(--red)'}">
-                ${fmtCLP(d.saldoAcum)}
-              </span>
-            </td>
+            <td><span style="font-weight:700;color:${d.saldoDia>=0?'var(--green)':'var(--red)'}">
+              ${d.saldoDia>=0?'+':''}${fmtCLP(d.saldoDia)}</span></td>
+            <td><span style="font-weight:700;color:${d.saldoAcum>=0?'#1E293B':'var(--red)'}">
+              ${fmtCLP(d.saldoAcum)}</span></td>
           </tr>
-          <!-- Detalle del día (colapsable con click) -->
-          ${d.entradas.length>0||d.salidas.length>0?`
           <tr id="det-${d.fecha}" style="display:none;background:#F8FAFC">
             <td colspan="6" style="padding:0 10px 10px">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding-top:8px">
                 <div>
-                  ${d.entradas.length>0?`
-                  <div style="font-size:11px;font-weight:600;color:var(--green);margin-bottom:4px">ENTRADAS</div>
-                  ${d.entradas.map(v=>`
-                    <div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;border-bottom:1px solid #F1F5F9">
-                      <span style="color:#64748B">${(v.barbero_nombre||'').split(' ')[0]} · ${v.servicio_producto||''}</span>
-                      <span style="font-weight:600">${fmtCLP(v.total)}</span>
-                    </div>`).join('')}`:''}
+                  ${d.e.length>0?`<div style="font-size:11px;font-weight:600;color:var(--green);margin-bottom:4px">ENTRADAS</div>
+                  ${d.e.map(v=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;border-bottom:1px solid #F1F5F9">
+                    <span style="color:#64748B">${(v.barbero_nombre||'').split(' ')[0]} · ${v.servicio_producto||''}</span>
+                    <span style="font-weight:600">${fmtCLP(v.total)}</span></div>`).join('')}`:''}
                 </div>
                 <div>
-                  ${d.salidas.length>0?`
-                  <div style="font-size:11px;font-weight:600;color:var(--red);margin-bottom:4px">SALIDAS</div>
-                  ${d.salidas.map(g=>`
-                    <div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;border-bottom:1px solid #F1F5F9">
-                      <span style="color:#64748B">${g.descripcion||''} <span class="badge badge-amber" style="font-size:10px">${g.categoria}</span></span>
-                      <span style="font-weight:600;color:var(--red)">${fmtCLP(g.monto)}</span>
-                    </div>`).join('')}`:''}
+                  ${d.s.length>0?`<div style="font-size:11px;font-weight:600;color:var(--red);margin-bottom:4px">SALIDAS</div>
+                  ${d.s.map(g=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;border-bottom:1px solid #F1F5F9">
+                    <span style="color:#64748B">${g.descripcion||''} <span class="badge badge-amber" style="font-size:10px">${g.categoria}</span></span>
+                    <span style="font-weight:600;color:var(--red)">${fmtCLP(g.monto)}</span></div>`).join('')}`:''}
                 </div>
               </div>
             </td>
-          </tr>`:''}
-          `).join('')}
+          </tr>`).join('')}
         </tbody>
         <tfoot>
           <tr style="background:#F1F5F9;font-weight:700">
             <td colspan="2">TOTAL ${MESES[arqueoFiltros.mes-1].toUpperCase()}</td>
             <td style="color:var(--green)">${fmtCLP(totalEntradas)}</td>
             <td style="color:var(--red)">${fmtCLP(totalSalidas)}</td>
-            <td style="color:${saldoCaja>=0?'var(--green)':'var(--red)'}">
-              ${saldoCaja>=0?'+':''}${fmtCLP(saldoCaja)}
-            </td>
-            <td></td>
+            <td style="color:${(totalEntradas-totalSalidas)>=0?'var(--green)':'var(--red)'}">
+              ${(totalEntradas-totalSalidas)>=0?'+':''}${fmtCLP(totalEntradas-totalSalidas)}</td>
+            <td style="color:${saldoFinal>=0?'var(--green)':'var(--red)'}"><strong>${fmtCLP(saldoFinal)}</strong></td>
           </tr>
         </tfoot>
       </table></div>
-      <p style="color:#64748B;font-size:11px;margin-top:8px">💡 Haz clic en una fila para ver el detalle del día</p>`
-    }
+      <p style="color:#64748B;font-size:11px;margin-top:8px">💡 Haz clic en una fila para ver el detalle del día</p>`}
   </div>
 
-  <!-- Detalle completo ventas EF -->
+  <!-- Tablas laterales -->
   <div class="grid-2" style="margin-bottom:16px">
     <div class="card">
       <div class="card-title">Ventas EF del mes (${vMes.length})</div>
-      <div style="max-height:320px;overflow-y:auto">
+      <div style="max-height:280px;overflow-y:auto">
       <table>
         <thead><tr><th>Fecha</th><th>Barbero</th><th>Descripción</th><th>Total</th></tr></thead>
         <tbody>
-          ${vMes.length===0
-            ? '<tr><td colspan="4" style="color:#64748B;text-align:center">Sin ventas EF</td></tr>'
-            : vMes.map(v=>`<tr>
-                <td>${v.fecha}</td>
-                <td>${(v.barbero_nombre||'').split(' ')[0]}</td>
-                <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.servicio_producto||''}</td>
-                <td style="color:var(--green);font-weight:600">${fmtCLP(v.total)}</td>
-              </tr>`).join('')}
+          ${vMes.length===0?'<tr><td colspan="4" style="color:#64748B;text-align:center">Sin ventas EF</td></tr>':
+            vMes.map(v=>`<tr>
+              <td>${v.fecha}</td>
+              <td>${(v.barbero_nombre||'').split(' ')[0]}</td>
+              <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.servicio_producto||''}</td>
+              <td style="color:var(--green);font-weight:600">${fmtCLP(v.total)}</td>
+            </tr>`).join('')}
         </tbody>
       </table>
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Gastos EF del mes (${gMes.length})</div>
-      <div style="max-height:320px;overflow-y:auto">
+      <div class="card-title">Salidas EF del mes (${gMes.length})</div>
+      <div style="max-height:280px;overflow-y:auto">
       <table>
-        <thead><tr><th>Fecha</th><th>Descripción</th><th>Categoría</th><th>Monto</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Monto</th></tr></thead>
         <tbody>
-          ${gMes.length===0
-            ? '<tr><td colspan="4" style="color:#64748B;text-align:center">Sin gastos EF</td></tr>'
-            : gMes.map(g=>`<tr>
-                <td>${g.fecha}</td>
-                <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.descripcion||''}</td>
-                <td><span class="badge badge-amber">${g.categoria||''}</span></td>
-                <td style="color:var(--red);font-weight:600">${fmtCLP(g.monto)}</td>
-              </tr>`).join('')}
+          ${gMes.length===0?'<tr><td colspan="4" style="color:#64748B;text-align:center">Sin salidas EF</td></tr>':
+            gMes.map(g=>`<tr>
+              <td>${g.fecha}</td>
+              <td><span class="badge badge-amber" style="font-size:10px">${g.categoria||''}</span></td>
+              <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.descripcion||g.detalle||''}</td>
+              <td style="color:var(--red);font-weight:600">${fmtCLP(g.monto)}</td>
+            </tr>`).join('')}
         </tbody>
       </table>
       </div>
     </div>
-  </div>
-  `;
+  </div>`;
 
-  // Click en fila para expandir detalle
-  diasConSaldo.forEach(d=>{
-    const rows = document.querySelectorAll(`tr`);
-    rows.forEach(tr=>{
-      if(tr.cells && tr.cells[0] && tr.cells[0].textContent.trim()===d.fecha){
-        tr.style.cursor='pointer';
-        tr.onclick=()=>{
-          const det=document.getElementById(`det-${d.fecha}`);
-          if(det) det.style.display = det.style.display==='none'?'table-row':'none';
-        };
-      }
-    });
-  });
-
-  // Registrar bridge helpers
   window._bridge.arqueoSetAnio = v=>{ arqueoFiltros.anio=Number(v); loadArqueo(); };
   window._bridge.arqueoSetMes  = v=>{ arqueoFiltros.mes=Number(v);  loadArqueo(); };
+  window._bridge.arqueoToggleDet = fecha=>{
+    const el=document.getElementById(`det-${fecha}`);
+    if(el) el.style.display=el.style.display==='none'?'table-row':'none';
+  };
+}
+
+async function saveSaldoInicial(){
+  const monto = Number(document.getElementById('saldoInicialInput')?.value||0);
+  const notas = document.getElementById('saldoInicialNotas')?.value||null;
+  showOverlay();
+  const {error} = await sb.from('caja_saldo_inicial')
+    .upsert({anio:arqueoFiltros.anio, mes:arqueoFiltros.mes, monto, notas, updated_at:new Date().toISOString()},
+            {onConflict:'anio,mes'});
+  hideOverlay();
+  if(error){toast('Error: '+error.message,'error');return;}
+  arqueoSaldoInicial = monto;
+  toast(`✓ Saldo inicial de ${MESES[arqueoFiltros.mes-1]} guardado: ${fmtCLP(monto)}`);
+  loadArqueo();
 }
 
 function arqueoExportCSV(){
-  // We need to re-query — trigger a download after reload
-  toast('Generando CSV...','info');
   Promise.all([
     sb.from('ventas').select('*').eq('forma_pago','EF').eq('anio',arqueoFiltros.anio).eq('n_mes',arqueoFiltros.mes).order('fecha'),
     sb.from('gastos').select('*').eq('forma_pago','EF').order('fecha'),
   ]).then(([vRes,gRes])=>{
-    const vMes=(vRes.data||[]);
+    const vMes=vRes.data||[];
     const gMes=(gRes.data||[]).filter(g=>{
       if(!g.fecha) return false;
       const [y,m]=g.fecha.split('-');
       return Number(y)==arqueoFiltros.anio&&Number(m)==arqueoFiltros.mes;
     });
-    const lines=['Tipo;Fecha;Barbero/Descripcion;Detalle;Monto;Categoria'];
+    const lines=[`Arqueo de Caja - ${MESES[arqueoFiltros.mes-1]} ${arqueoFiltros.anio}`,
+      `Saldo Inicial;;${arqueoSaldoInicial}`,
+      'Tipo;Fecha;Barbero/Descripcion;Detalle;Monto;Categoria'];
     vMes.forEach(v=>lines.push(`Entrada;${v.fecha};${v.barbero_nombre||''};${v.servicio_producto||''};${v.total||0};Venta EF`));
-    gMes.forEach(g=>lines.push(`Salida;${g.fecha};;${g.descripcion||''};-${g.monto||0};${g.categoria||''}`));
+    gMes.forEach(g=>lines.push(`Salida;${g.fecha};;${g.descripcion||g.detalle||''};-${g.monto||0};${g.categoria||''}`));
+    const totalE=vMes.reduce((s,v)=>s+(v.total||0),0);
+    const totalS=gMes.reduce((s,g)=>s+(g.monto||0),0);
+    lines.push(`;;Saldo Final;;${arqueoSaldoInicial+totalE-totalS};`);
     const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;
-    a.download=`arqueo_caja_${MESES[arqueoFiltros.mes-1]}_${arqueoFiltros.anio}.csv`;
-    a.click();
+    a.download=`arqueo_${MESES[arqueoFiltros.mes-1]}_${arqueoFiltros.anio}.csv`;a.click();
   });
 }
+
 
 // ============ BRIDGE ASSIGNMENTS ============
 window._bridge.checkPw=checkPw;
@@ -2504,6 +2631,8 @@ window._bridge.concilSetMes=v=>{concilState.mes=Number(v);renderConciliacion();}
 window._bridge.runConciliacion=runConciliacion;
 window._bridge.loadArqueo=loadArqueo;
 window._bridge.arqueoExportCSV=arqueoExportCSV;
+window._bridge.saveSaldoInicial=saveSaldoInicial;
+window._bridge.gastoSetTab=v=>{gastoTabActiva=v;renderGastos();};
 window._bridge.dshTab=()=>{};
 
 </script>
