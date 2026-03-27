@@ -246,15 +246,19 @@ async function loadDashboard(){
   showOverlay();
   await loadCatalogos();
   // Fetch all ventas & gastos
-  const {data:ventas}=await sb.from('ventas').select('*').eq('anio',dshFilters.anio).limit(5000);
-  const {data:gastos}=await sb.from('gastos').select('*').limit(5000);
+  // Fetch ventas del año seleccionado (o todos si anio=0)
+  let qVentas = sb.from('ventas').select('*').limit(5000);
+  if(dshFilters.anio>0) qVentas = qVentas.eq('anio', dshFilters.anio);
+  const {data:ventas, error:vErr} = await qVentas;
+  const {data:gastos} = await sb.from('gastos').select('*').limit(5000);
   hideOverlay();
 
-  const anios=[...new Set((ventas||[]).map(v=>v.anio))].sort((a,b)=>b-a);
-  if(!anios.includes(dshFilters.anio)&&anios.length) dshFilters.anio=anios[0];
+  // Años disponibles — consultamos aparte para el selector
+  const {data:aniosData} = await sb.from('ventas').select('anio').limit(5000);
+  const anios=[...new Set((aniosData||[]).map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
 
-  let vFilt=(ventas||[]).filter(v=>v.anio==dshFilters.anio);
-  let gFilt=(gastos||[]).filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==dshFilters.anio);
+  let vFilt = (ventas||[]);
+  let gFilt = (gastos||[]).filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==dshFilters.anio);
   if(dshFilters.mes>0){
     vFilt=vFilt.filter(v=>v.n_mes==dshFilters.mes);
     gFilt=gFilt.filter(g=>g.fecha&&Number(g.fecha.split('-')[1])==dshFilters.mes);
