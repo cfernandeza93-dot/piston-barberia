@@ -1029,7 +1029,7 @@ function renderHistorial(){
       <option value="SIN_COD" ${hFilters.concil==='SIN_COD'?'selected':''}>Sin Cod. Auth</option>
       <option value="NO_APLICA" ${hFilters.concil==='NO_APLICA'?'selected':''}>No aplica (EF/TRF)</option>
     </select>
-    <input type="text" placeholder="Buscar (cod. auth, barbero, servicio...)" value="${hFilters.buscar}" oninput="window._bridge.hSet('buscar',this.value)" style="min-width:200px">
+    <input type="text" placeholder="Buscar (cod. auth, barbero, servicio...)" value="${hFilters.buscar}" oninput="window._bridge.hBuscar(this.value)" style="min-width:200px">
     <button class="btn btn-ghost btn-sm" onclick="exportHistorialCSV()">⬇ CSV</button>
     <span style="font-size:12px;color:#64748B;margin-left:auto">${rows.length} registros</span>
   </div>
@@ -1048,6 +1048,46 @@ function renderHistorial(){
   `;
 
   window._bridge.hSet=(k,v)=>{hFilters[k]=v;renderHistorial()};
+  window._bridge.hBuscar=(v)=>{
+    hFilters.buscar=v;
+    // Solo actualizar tbody y contador sin re-renderizar todo (evita perder foco)
+    const bOpts=barberos.map(b=>`<option value="${b.id}" data-nombre="${b.nombre}">${b.nombre}</option>`).join('');
+    const sOpts=servicios.map(s=>`<option value="${s.nombre}">${s.nombre}</option>`).join('');
+    let rows=hData;
+    if(hFilters.anio) rows=rows.filter(v=>String(v.anio)===hFilters.anio);
+    if(hFilters.mes) rows=rows.filter(v=>String(v.n_mes)===hFilters.mes);
+    if(hFilters.barbero) rows=rows.filter(v=>v.barbero_nombre===hFilters.barbero);
+    if(hFilters.tipo) rows=rows.filter(v=>v.tipo===hFilters.tipo);
+    if(hFilters.pago) rows=rows.filter(v=>v.forma_pago===hFilters.pago);
+    if(v){
+      const q=v.toLowerCase();
+      rows=rows.filter(r=>(r.cod_autorizacion||'').toLowerCase().includes(q)||(r.barbero_nombre||'').toLowerCase().includes(q)||(r.servicio_producto||'').toLowerCase().includes(q)||(r.cliente||'').toLowerCase().includes(q));
+    }
+    if(hFilters.concil){
+      rows=rows.filter(r=>{
+        if(r.forma_pago!=='TK') return hFilters.concil==='NO_APLICA';
+        if(hFilters.concil==='NO_APLICA') return false;
+        const codN=String(r.cod_autorizacion||'').trim().replace(/^0+/,'');
+        const k=`${r.anio}-${r.n_mes}-${codN}`;
+        const gn=hGetnetMap[k];
+        if(hFilters.concil==='SIN_COD') return !r.cod_autorizacion;
+        if(!r.cod_autorizacion) return false;
+        if(hFilters.concil==='SIN_GETNET') return !gn;
+        if(!gn) return false;
+        const vmc=hData.filter(x=>x.forma_pago==='TK'&&x.anio==r.anio&&x.n_mes==r.n_mes&&x.cod_autorizacion&&String(x.cod_autorizacion).trim().replace(/^0+/,'')==codN);
+        const tSys=vmc.reduce((s,x)=>s+(x.total||0),0);
+        const pSys=vmc.reduce((s,x)=>s+(x.propina||0),0);
+        const diff=Math.abs(gn.total_gn-tSys)>100||Math.abs(gn.propina_gn-pSys)>100;
+        if(hFilters.concil==='DIFERENCIA') return diff;
+        if(hFilters.concil==='OK') return !diff;
+        return true;
+      });
+    }
+    const tbody=document.getElementById('hTbody');
+    if(tbody) tbody.innerHTML=rows.map(r=>renderHistorialRow(r,bOpts,sOpts)).join('');
+    const cnt=document.querySelector('.filters span[style*="margin-left:auto"]');
+    if(cnt) cnt.textContent=`${rows.length} registros`;
+  };
 }
 
 function getConcilBadge(v){
