@@ -930,7 +930,7 @@ async function submitVenta(){
 }
 
 // ============ HISTORIAL ============
-let hFilters={barbero:'',tipo:'',pago:'',mes:'',buscar:'',anio:''};
+let hFilters={barbero:'',tipo:'',pago:'',mes:'',buscar:'',anio:'',concil:''};
 let hData=[];
 let editingVentaId=null;
 
@@ -967,6 +967,27 @@ function renderHistorial(){
     const q=hFilters.buscar.toLowerCase();
     rows=rows.filter(v=>(v.cod_autorizacion||'').toLowerCase().includes(q)||(v.barbero_nombre||'').toLowerCase().includes(q)||(v.servicio_producto||'').toLowerCase().includes(q)||(v.cliente||'').toLowerCase().includes(q));
   }
+  // Filtro por estado conciliación
+  if(hFilters.concil){
+    rows=rows.filter(v=>{
+      if(v.forma_pago!=='TK') return hFilters.concil==='NO_APLICA';
+      if(hFilters.concil==='NO_APLICA') return false;
+      const codN=String(v.cod_autorizacion||'').trim().replace(/^0+/,'');
+      const k=`${v.anio}-${v.n_mes}-${codN}`;
+      const gn=hGetnetMap[k];
+      if(hFilters.concil==='SIN_COD') return !v.cod_autorizacion;
+      if(!v.cod_autorizacion) return false;
+      if(hFilters.concil==='SIN_GETNET') return !gn;
+      if(!gn) return false;
+      const ventasMismoCod=hData.filter(x=>x.forma_pago==='TK'&&x.anio==v.anio&&x.n_mes==v.n_mes&&x.cod_autorizacion&&String(x.cod_autorizacion).trim().replace(/^0+/,'')==codN);
+      const totalSys=ventasMismoCod.reduce((s,x)=>s+(x.total||0),0);
+      const propinaSys=ventasMismoCod.reduce((s,x)=>s+(x.propina||0),0);
+      const diff=Math.abs(gn.total_gn-totalSys)>100||Math.abs(gn.propina_gn-propinaSys)>100;
+      if(hFilters.concil==='DIFERENCIA') return diff;
+      if(hFilters.concil==='OK') return !diff;
+      return true;
+    });
+  }
 
   const anios=[...new Set(hData.map(v=>v.anio))].sort((a,b)=>b-a);
   const bNombres=[...new Set(hData.map(v=>v.barbero_nombre))].filter(Boolean).sort();
@@ -998,6 +1019,15 @@ function renderHistorial(){
       <option value="EF" ${hFilters.pago==='EF'?'selected':''}>EF</option>
       <option value="TK" ${hFilters.pago==='TK'?'selected':''}>TK</option>
       <option value="TRF" ${hFilters.pago==='TRF'?'selected':''}>TRF</option>
+      <option value="MP" ${hFilters.pago==='MP'?'selected':''}>MP</option>
+    </select>
+    <select onchange="window._bridge.hSet('concil',this.value)">
+      <option value="">Estado Concil.</option>
+      <option value="OK" ${hFilters.concil==='OK'?'selected':''}>✓ OK</option>
+      <option value="DIFERENCIA" ${hFilters.concil==='DIFERENCIA'?'selected':''}>⚠ Diferencia</option>
+      <option value="SIN_GETNET" ${hFilters.concil==='SIN_GETNET'?'selected':''}>✗ Sin GetNet</option>
+      <option value="SIN_COD" ${hFilters.concil==='SIN_COD'?'selected':''}>Sin Cod. Auth</option>
+      <option value="NO_APLICA" ${hFilters.concil==='NO_APLICA'?'selected':''}>No aplica (EF/TRF)</option>
     </select>
     <input type="text" placeholder="Buscar (cod. auth, barbero, servicio...)" value="${hFilters.buscar}" oninput="window._bridge.hSet('buscar',this.value)" style="min-width:200px">
     <button class="btn btn-ghost btn-sm" onclick="exportHistorialCSV()">⬇ CSV</button>
