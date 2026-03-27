@@ -934,11 +934,24 @@ let hFilters={barbero:'',tipo:'',pago:'',mes:'',buscar:'',anio:''};
 let hData=[];
 let editingVentaId=null;
 
+// Mapa de GetNet por mes/cod para el historial
+let hGetnetMap = {}; // key: "anio-mes-codNorm" → {total_gn, propina_gn}
+
 async function loadHistorial(){
   showOverlay();
   await loadCatalogos();
   const {data:raw}=await sb.rpc('get_ventas_historial');
   hData=raw||[];
+  // Cargar todos los registros GetNet para cruzar en historial
+  const {data:gn}=await sb.from('getnet_transacciones').select('cod_aut,anio,mes,valor_transaccion,propina').range(0,4999);
+  hGetnetMap={};
+  (gn||[]).forEach(r=>{
+    const k=`${r.anio}-${r.mes}-${String(r.cod_aut||'').trim().replace(/^0+/,'')}`;
+    if(!hGetnetMap[k]) hGetnetMap[k]={total_gn:0,propina_gn:0,count:0};
+    hGetnetMap[k].total_gn+=r.valor_transaccion||0;
+    hGetnetMap[k].propina_gn+=r.propina||0;
+    hGetnetMap[k].count++;
+  });
   hideOverlay();
   renderHistorial();
 }
@@ -995,7 +1008,7 @@ function renderHistorial(){
       <thead><tr>
         <th>Fecha</th><th>Barbero</th><th>Tipo</th><th>Servicio/Producto</th>
         <th>Monto</th><th>Propina</th><th>Desc.</th><th>Total</th>
-        <th>Pago</th><th>Cod. Auth</th><th>Boleta</th><th>Cliente</th><th>Acciones</th>
+        <th>Pago</th><th>Concil.</th><th>Cod. Auth</th><th>Boleta</th><th>Cliente</th><th>Acciones</th>
       </tr></thead>
       <tbody id="hTbody">
         ${rows.map(v=>renderHistorialRow(v,bOpts,sOpts)).join('')}
@@ -1005,6 +1018,26 @@ function renderHistorial(){
   `;
 
   window._bridge.hSet=(k,v)=>{hFilters[k]=v;renderHistorial()};
+}
+
+function getConcilBadge(v){
+  // Solo aplica a TK
+  if(v.forma_pago!=='TK') return '<td><span style="color:#CBD5E1;font-size:10px">—</span></td>';
+  if(!v.cod_autorizacion) return '<td><span class="badge badge-gray" title="Sin cod. auth">Sin cod</span></td>';
+  const codN=String(v.cod_autorizacion).trim().replace(/^0+/,'');
+  const k=`${v.anio}-${v.n_mes}-${codN}`;
+  const gn=hGetnetMap[k];
+  if(!gn){
+    return `<td><span class="badge badge-red" style="font-size:10px;cursor:default" title="No encontrado en GetNet">Sin GetNet</span></td>`;
+  }
+  // Agrupar ventas del mismo cod para comparar totales
+  const ventasMismoCod=hData.filter(x=>x.forma_pago==='TK'&&x.anio==v.anio&&x.n_mes==v.n_mes&&x.cod_autorizacion&&String(x.cod_autorizacion).trim().replace(/^0+/,'')==codN);
+  const totalSys=ventasMismoCod.reduce((s,x)=>s+(x.total||0),0);
+  const propinaSys=ventasMismoCod.reduce((s,x)=>s+(x.propina||0),0);
+  if(Math.abs(gn.total_gn-totalSys)>100||Math.abs(gn.propina_gn-propinaSys)>100){
+    return `<td><span class="badge badge-amber" style="font-size:10px;cursor:default" title="GetNet: ${fmtCLP(gn.total_gn)} | Sistema: ${fmtCLP(totalSys)}">Diferencia</span></td>`;
+  }
+  return `<td><span class="badge badge-green" style="font-size:10px;cursor:default" title="OK: ${fmtCLP(gn.total_gn)}">✓ OK</span></td>`;
 }
 
 function renderHistorialRow(v,bOpts,sOpts){
@@ -1044,6 +1077,7 @@ function renderHistorialRow(v,bOpts,sOpts){
       <span class="view-cell"><span class="badge ${v.forma_pago==='EF'?'badge-green':v.forma_pago==='TK'?'badge-blue':v.forma_pago==='MP'?'badge-mp':'badge-purple'}">${v.forma_pago||''}</span></span>
       <span class="edit-cell"><select id="he-pago-${v.id}"><option value="EF">EF</option><option value="TK">TK</option><option value="TRF">TRF</option></select></span>
     </td>
+    ${getConcilBadge(v)}
     <td>
       <span class="view-cell">${v.cod_autorizacion||''}</span>
       <span class="edit-cell"><input type="text" id="he-auth-${v.id}" value="${v.cod_autorizacion||''}" style="width:90px"></span>
