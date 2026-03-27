@@ -281,30 +281,39 @@ async function loadDashboard(){
   const trf=vFilt.filter(v=>v.forma_pago==='TRF').reduce((s,v)=>s+(v.total||0),0);
   const mp=vFilt.filter(v=>v.forma_pago==='MP').reduce((s,v)=>s+(v.total||0),0);
 
-  // Por barbero
+  // Por barbero — solo servicios para liquidaciones
   const byBarbero={};
   vFilt.forEach(v=>{
     const n=v.barbero_nombre||'Sin barbero';
-    if(!byBarbero[n]) byBarbero[n]={ventas:0,comision:0,comisionEF:0,propinas:0,propinasEF:0,productos:0,productosEF:0};
+    if(!byBarbero[n]) byBarbero[n]={
+      ventas:0,
+      // EF servicios
+      efMonto:0, efPropina:0,
+      // TK+TRF+MP servicios
+      tkMonto:0, tkPropina:0,
+      // productos (para barras)
+      productos:0
+    };
     const esEF = v.forma_pago==='EF';
     if(v.tipo==='servicio'){
       byBarbero[n].ventas+=(v.monto||0);
       const svc=servicios.find(s=>s.nombre===v.servicio_producto);
       const pct=(svc?.comision||50)/100;
-      const com=(v.monto||0)*pct;
-      byBarbero[n].comision+=com;
-      if(esEF) byBarbero[n].comisionEF+=com;
+      const com=Math.round((v.monto||0)*pct);
+      const prop=(v.propina||0);
+      if(esEF){ byBarbero[n].efMonto+=com; byBarbero[n].efPropina+=prop; }
+      else     { byBarbero[n].tkMonto+=com; byBarbero[n].tkPropina+=prop; }
     }
-    if(v.tipo==='PRODUCTO'){
-      byBarbero[n].productos+=(v.monto||0);
-      if(esEF) byBarbero[n].productosEF+=(v.monto||0);
-    }
-    byBarbero[n].propinas+=(v.propina||0);
-    if(esEF) byBarbero[n].propinasEF+=(v.propina||0);
+    if(v.tipo==='PRODUCTO') byBarbero[n].productos+=(v.monto||0);
   });
   Object.keys(byBarbero).forEach(k=>{
-    byBarbero[k].total   = byBarbero[k].comision    + byBarbero[k].propinas    + byBarbero[k].productos*0.1;
-    byBarbero[k].totalEF = byBarbero[k].comisionEF  + byBarbero[k].propinasEF  + byBarbero[k].productosEF*0.1;
+    const b=byBarbero[k];
+    b.efTotal  = b.efMonto + b.efPropina;
+    b.tkTotal  = b.tkMonto + b.tkPropina;
+    b.total    = b.efTotal + b.tkTotal;
+    // Para barras y orden
+    b.comision = b.efMonto + b.tkMonto;
+    b.propinas = b.efPropina + b.tkPropina;
   });
   const barMax=Math.max(...Object.values(byBarbero).map(b=>b.ventas),1);
 
@@ -386,37 +395,69 @@ async function loadDashboard(){
         </div>`).join('')||'<p style="color:#64748B;font-size:12px">Sin datos</p>'}
     </div>
     <div class="card" style="overflow-x:auto">
-      <div class="card-title">Liquidaciones por Barbero</div>
+      <div class="card-title">Liquidaciones por Barbero — Servicios</div>
       <table>
         <thead>
           <tr>
-            <th rowspan="2" style="vertical-align:middle">Barbero</th>
-            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">Comisión Svc</th>
-            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">10% Prod.</th>
-            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">Propinas</th>
-            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">Total</th>
+            <th rowspan="2" style="vertical-align:bottom;min-width:80px">Barbero</th>
+            <th colspan="3" style="text-align:center;background:#F0FDF4;color:var(--green);border-left:2px solid #86EFAC">
+              💵 Efectivo (EF)
+            </th>
+            <th colspan="3" style="text-align:center;background:#EFF6FF;color:var(--blue);border-left:2px solid #93C5FD">
+              💳 Tarjeta / Transferencia (TK · TRF · MP)
+            </th>
+            <th rowspan="2" style="vertical-align:bottom;text-align:right;background:#F8FAFC;border-left:2px solid var(--border)">
+              Total
+            </th>
           </tr>
           <tr>
-            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
-            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
-            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
-            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
+            <th style="background:#F0FDF4;color:#64748B;font-size:10px;border-left:2px solid #86EFAC">Comisión</th>
+            <th style="background:#F0FDF4;color:#64748B;font-size:10px">Propina</th>
+            <th style="background:#F0FDF4;color:var(--green);font-size:11px;font-weight:700">Total EF</th>
+            <th style="background:#EFF6FF;color:#64748B;font-size:10px;border-left:2px solid #93C5FD">Comisión</th>
+            <th style="background:#EFF6FF;color:#64748B;font-size:10px">Propina</th>
+            <th style="background:#EFF6FF;color:var(--blue);font-size:11px;font-weight:700">Total TK</th>
+            <th style="background:#F8FAFC;border-left:2px solid var(--border)"></th>
           </tr>
         </thead>
         <tbody>
-          ${Object.entries(byBarbero).filter(([n])=>!n.toUpperCase().includes('PISTON')).sort((a,b)=>b[1].total-a[1].total).map(([n,d])=>`
+          ${Object.entries(byBarbero)
+            .filter(([n])=>!n.toUpperCase().includes('PISTON'))
+            .sort((a,b)=>b[1].total-a[1].total)
+            .map(([n,d])=>`
           <tr>
             <td><strong>${n.split(' ')[0]}</strong></td>
-            <td style="color:var(--green)">${d.comisionEF>0?fmtCLP(Math.round(d.comisionEF)):'—'}</td>
-            <td>${fmtCLP(Math.round(d.comision))}</td>
-            <td style="color:var(--green)">${d.productosEF>0?fmtCLP(Math.round(d.productosEF*0.1)):'—'}</td>
-            <td>${fmtCLP(Math.round(d.productos*0.1))}</td>
-            <td style="color:var(--green)">${d.propinasEF>0?fmtCLP(d.propinasEF):'—'}</td>
-            <td>${fmtCLP(d.propinas)}</td>
-            <td style="color:var(--green);font-weight:700">${d.totalEF>0?fmtCLP(Math.round(d.totalEF)):'—'}</td>
-            <td><strong>${fmtCLP(Math.round(d.total))}</strong></td>
-          </tr>`).join('')||'<tr><td colspan="9" style="color:#64748B">Sin datos</td></tr>'}
+            <td style="background:#F0FDF4;border-left:2px solid #86EFAC">${d.efMonto>0?fmtCLP(d.efMonto):'—'}</td>
+            <td style="background:#F0FDF4">${d.efPropina>0?fmtCLP(d.efPropina):'—'}</td>
+            <td style="background:#F0FDF4;font-weight:700;color:var(--green)">${d.efTotal>0?fmtCLP(d.efTotal):'—'}</td>
+            <td style="background:#EFF6FF;border-left:2px solid #93C5FD">${d.tkMonto>0?fmtCLP(d.tkMonto):'—'}</td>
+            <td style="background:#EFF6FF">${d.tkPropina>0?fmtCLP(d.tkPropina):'—'}</td>
+            <td style="background:#EFF6FF;font-weight:700;color:var(--blue)">${d.tkTotal>0?fmtCLP(d.tkTotal):'—'}</td>
+            <td style="background:#F8FAFC;border-left:2px solid var(--border);font-weight:700;font-size:14px">${fmtCLP(d.total)}</td>
+          </tr>`).join('')||'<tr><td colspan="8" style="color:#64748B">Sin datos</td></tr>'}
         </tbody>
+        <tfoot>
+          ${(()=>{
+            const rows=Object.entries(byBarbero).filter(([n])=>!n.toUpperCase().includes('PISTON'));
+            const sumEfM=rows.reduce((s,[,d])=>s+d.efMonto,0);
+            const sumEfP=rows.reduce((s,[,d])=>s+d.efPropina,0);
+            const sumEfT=rows.reduce((s,[,d])=>s+d.efTotal,0);
+            const sumTkM=rows.reduce((s,[,d])=>s+d.tkMonto,0);
+            const sumTkP=rows.reduce((s,[,d])=>s+d.tkPropina,0);
+            const sumTkT=rows.reduce((s,[,d])=>s+d.tkTotal,0);
+            const sumT=rows.reduce((s,[,d])=>s+d.total,0);
+            return `<tr style="font-weight:700;background:#F1F5F9">
+              <td>TOTAL</td>
+              <td style="background:#DCFCE7;border-left:2px solid #86EFAC">${fmtCLP(sumEfM)}</td>
+              <td style="background:#DCFCE7">${fmtCLP(sumEfP)}</td>
+              <td style="background:#DCFCE7;color:var(--green)">${fmtCLP(sumEfT)}</td>
+              <td style="background:#DBEAFE;border-left:2px solid #93C5FD">${fmtCLP(sumTkM)}</td>
+              <td style="background:#DBEAFE">${fmtCLP(sumTkP)}</td>
+              <td style="background:#DBEAFE;color:var(--blue)">${fmtCLP(sumTkT)}</td>
+              <td style="background:#F1F5F9;border-left:2px solid var(--border);font-size:15px">${fmtCLP(sumT)}</td>
+            </tr>`;
+          })()}
+        </tfoot>
       </table>
     </div>
   </div>
