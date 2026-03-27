@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Píston Barbería</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -131,7 +134,7 @@ tr:hover td{background:#F8FAFC}
   <div class="topbar">
     <div>
       <div class="topbar-title">✂ PÍSTON BARBERÍA</div>
-      <div class="topbar-subtitle">Sistema de Gestión</div>
+      <div class="topbar-subtitle">Sistema de Gestión · v28mar</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <span id="topbarDate" style="font-size:11px;color:#94A3B8"></span>
@@ -242,7 +245,7 @@ function go(tab){
 let dshFilters={anio:new Date().getFullYear(),mes:new Date().getMonth()+1};
 
 async function loadDashboard(){
-  document.getElementById('mainContent').innerHTML=`<div style="text-align:center;padding:40px;color:#64748B">Cargando...</div>`;
+  document.getElementById('mainContent').innerHTML=`<div style="text-align:center;padding:40px;color:#64748B">Cargando datos...</div>`;
   showOverlay();
   await loadCatalogos();
   // Fetch all ventas & gastos
@@ -256,6 +259,10 @@ async function loadDashboard(){
   // Años disponibles — consultamos aparte para el selector
   const {data:aniosData} = await sb.from('ventas').select('anio').limit(5000);
   const anios=[...new Set((aniosData||[]).map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
+
+  // Debug temporal — confirma versión y datos cargados
+  console.log('v28mar — ventas cargadas:', (ventas||[]).length, '| filtro:', dshFilters);
+  console.log('Meses en datos:', [...new Set((ventas||[]).map(v=>v.n_mes))].sort());
 
   let vFilt = (ventas||[]);
   let gFilt = (gastos||[]).filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==dshFilters.anio);
