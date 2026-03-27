@@ -1797,7 +1797,9 @@ function runConciliacion(){
     total:vs.reduce((s,v)=>s+(v.total||0),0),montoSys:null,propinaSys:null,totalSys:null,vsys:vs,
     fecha:vs[0].fecha,marca:'—'
   }));
+  const todosResultados=[...resultados,...sinGetNet];
   concilState.resultados=resultados;
+  concilState.todosResultados=todosResultados;
 
   const totalGetNet=getnetRows.reduce((s,r)=>s+r.total,0);
   const totalSistema=vtkMes.reduce((s,v)=>s+(v.total||0),0);
@@ -1810,7 +1812,7 @@ function runConciliacion(){
     <div class="metric"><div class="metric-label">GetNet (${getnetRows.length} txn)</div><div class="metric-value">${fmtCLP(totalGetNet)}</div></div>
     <div class="metric"><div class="metric-label">Sistema TK (${vtkMes.length} reg)</div><div class="metric-value">${fmtCLP(totalSistema)}</div></div>
     <div class="metric"><div class="metric-label">Diferencia</div><div class="metric-value" style="color:${Math.abs(diffTotal)<100?'var(--green)':'var(--red)'}">${diffTotal>=0?'+':''}${fmtCLP(diffTotal)}</div></div>
-    <div class="metric"><div class="metric-label">Estado</div>
+    <div class="metric"><div class="metric-label">Resumen</div>
       <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
         <span class="badge badge-green">✓ OK: ${ok}</span>
         <span class="badge badge-amber">⚠ Diferencia: ${diffs}</span>
@@ -1820,28 +1822,67 @@ function runConciliacion(){
     </div>
   </div>
   <div class="card">
-    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-      <span>Resultado — ${MESES[mes-1]} ${anio}</span>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${[
+          {k:'TODOS', label:`Todos (${todosResultados.length})`, bg:'#DBEAFE', color:'#1D4ED8', border:'#93C5FD'},
+          {k:'OK', label:`✓ OK (${ok})`, bg:'#DCFCE7', color:'#15803D', border:'#86EFAC'},
+          {k:'DIFERENCIA', label:`⚠ Diferencia (${diffs})`, bg:'#FEF3C7', color:'#B45309', border:'#FCD34D'},
+          {k:'FALTANTE EN SISTEMA', label:`✗ Sin sistema (${missing})`, bg:'#FEE2E2', color:'#DC2626', border:'#FCA5A5'},
+          {k:'EN SISTEMA SIN GETNET', label:`↩ Sin GetNet (${sinGetNet.length})`, bg:'#EDE9FE', color:'#6D28D9', border:'#C4B5FD'},
+        ].map((f,i)=>`
+          <button id="cfbtn-${f.k.replace(/ /g,'_')}"
+            onclick="window._bridge.concilFiltrar('${f.k}')"
+            style="padding:5px 12px;border:2px solid ${i===0?f.border:'transparent'};border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;
+                   background:${i===0?f.bg:'#F1F5F9'};color:${i===0?f.color:'#475569'};transition:.15s">
+            ${f.label}
+          </button>`).join('')}
+      </div>
       ${(diffs+missing+sinGetNet.length)>0?`<button class="btn btn-ghost btn-sm" onclick="exportConcilErrors()">⬇ Exportar errores CSV</button>`:''}
     </div>
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr><th>Cod. Auth</th><th>Fecha</th><th>Marca</th><th>Monto GetNet</th><th>Monto Sis.</th><th>Propina GetNet</th><th>Propina Sis.</th><th>Total GetNet</th><th>Total Sis.</th><th>Estado</th></tr></thead>
-      <tbody>
-        ${[...resultados,...sinGetNet].map(r=>`
-        <tr class="${r.estado==='OK'?'concil-match':r.estado==='DIFERENCIA'?'concil-diff':'concil-missing'}">
-          <td style="font-family:monospace;font-size:11px">${r.cod}</td>
-          <td>${r.fecha?String(r.fecha).split('T')[0]:''}</td>
-          <td>${r.marca||'—'}</td>
-          <td>${r.monto!=null?fmtCLP(r.monto):'—'}</td><td>${r.montoSys!=null?fmtCLP(r.montoSys):'—'}</td>
-          <td>${r.propina!=null?fmtCLP(r.propina):'—'}</td><td>${r.propinaSys!=null?fmtCLP(r.propinaSys):'—'}</td>
-          <td>${r.total!=null?fmtCLP(r.total):'—'}</td><td>${r.totalSys!=null?fmtCLP(r.totalSys):'—'}</td>
-          <td><span class="badge ${r.estado==='OK'?'badge-green':r.estado==='DIFERENCIA'?'badge-amber':r.estado==='EN SISTEMA SIN GETNET'?'badge-purple':'badge-red'}" style="white-space:nowrap">${r.estado}</span></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>
+    <div style="overflow-x:auto" id="concilTablaWrap">
+      ${renderConcilTabla(todosResultados)}
     </div>
   </div>`;
+
+  // Registrar bridge
+  const filtroMeta=[
+    {k:'TODOS', bg:'#DBEAFE', color:'#1D4ED8', border:'#93C5FD'},
+    {k:'OK', bg:'#DCFCE7', color:'#15803D', border:'#86EFAC'},
+    {k:'DIFERENCIA', bg:'#FEF3C7', color:'#B45309', border:'#FCD34D'},
+    {k:'FALTANTE EN SISTEMA', bg:'#FEE2E2', color:'#DC2626', border:'#FCA5A5'},
+    {k:'EN SISTEMA SIN GETNET', bg:'#EDE9FE', color:'#6D28D9', border:'#C4B5FD'},
+  ];
+  window._bridge.concilFiltrar = k => {
+    // Actualizar estilos de botones
+    filtroMeta.forEach(f=>{
+      const btn=document.getElementById(`cfbtn-${f.k.replace(/ /g,'_')}`);
+      if(!btn) return;
+      if(f.k===k){ btn.style.background=f.bg; btn.style.color=f.color; btn.style.borderColor=f.border; }
+      else { btn.style.background='#F1F5F9'; btn.style.color='#475569'; btn.style.borderColor='transparent'; }
+    });
+    const lista = k==='TODOS' ? concilState.todosResultados : concilState.todosResultados.filter(r=>r.estado===k);
+    document.getElementById('concilTablaWrap').innerHTML = renderConcilTabla(lista);
+  };
+}
+
+function renderConcilTabla(lista){
+  if(!lista.length) return '<p style="text-align:center;padding:20px;color:#64748B">Sin registros para este filtro</p>';
+  return `<table>
+    <thead><tr><th>Cod. Auth</th><th>Fecha</th><th>Marca</th><th>Monto GetNet</th><th>Monto Sis.</th><th>Propina GetNet</th><th>Propina Sis.</th><th>Total GetNet</th><th>Total Sis.</th><th>Estado</th></tr></thead>
+    <tbody>
+      ${lista.map(r=>`
+      <tr class="${r.estado==='OK'?'concil-match':r.estado==='DIFERENCIA'?'concil-diff':'concil-missing'}">
+        <td style="font-family:monospace;font-size:11px">${r.cod}</td>
+        <td>${r.fecha?String(r.fecha).split('T')[0]:''}</td>
+        <td>${r.marca||'—'}</td>
+        <td>${r.monto!=null?fmtCLP(r.monto):'—'}</td><td>${r.montoSys!=null?fmtCLP(r.montoSys):'—'}</td>
+        <td>${r.propina!=null?fmtCLP(r.propina):'—'}</td><td>${r.propinaSys!=null?fmtCLP(r.propinaSys):'—'}</td>
+        <td>${r.total!=null?fmtCLP(r.total):'—'}</td><td>${r.totalSys!=null?fmtCLP(r.totalSys):'—'}</td>
+        <td><span class="badge ${r.estado==='OK'?'badge-green':r.estado==='DIFERENCIA'?'badge-amber':r.estado==='EN SISTEMA SIN GETNET'?'badge-purple':'badge-red'}" style="white-space:nowrap">${r.estado}</span></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
 }
 
 function exportConcilErrors(){
