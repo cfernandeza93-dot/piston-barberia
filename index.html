@@ -134,7 +134,7 @@ tr:hover td{background:#F8FAFC}
   <div class="topbar">
     <div>
       <div class="topbar-title">✂ PÍSTON BARBERÍA</div>
-      <div class="topbar-subtitle">Sistema de Gestión · v28mar</div>
+      <div class="topbar-subtitle">Sistema de Gestión · v28mar-json</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <span id="topbarDate" style="font-size:11px;color:#94A3B8"></span>
@@ -249,8 +249,9 @@ async function loadDashboard(){
   showOverlay();
   await loadCatalogos();
   // Fetch all ventas & gastos
-  // Usar RPC para obtener ventas sin límite de filas PostgREST
-  const {data:ventas} = await sb.rpc('get_ventas_anio', {p_anio: dshFilters.anio}).range(0, 4999);
+  // RPC que retorna JSON directo, sin límite de filas de PostgREST
+  const {data:ventasJson} = await sb.rpc('get_ventas_anio_json', {p_anio: dshFilters.anio});
+  const ventas = ventasJson || [];
   const {data:gastos} = await sb.from('gastos').select('*').range(0,4999);
   hideOverlay();
 
@@ -258,7 +259,7 @@ async function loadDashboard(){
   const {data:aniosData} = await sb.from('ventas').select('anio').range(0,4999);
   const anios=[...new Set((aniosData||[]).map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
 
-  console.log('v28mar-range — ventas:', (ventas||[]).length, 'mes:', dshFilters.mes, 'anio:', dshFilters.anio);
+  console.log('v28mar-json — ventas:', (ventas||[]).length, 'mes:', dshFilters.mes);
 
   let vFilt = (ventas||[]);
   let gFilt = (gastos||[]).filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==dshFilters.anio);
