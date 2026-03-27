@@ -285,19 +285,26 @@ async function loadDashboard(){
   const byBarbero={};
   vFilt.forEach(v=>{
     const n=v.barbero_nombre||'Sin barbero';
-    if(!byBarbero[n]) byBarbero[n]={ventas:0,comision:0,propinas:0,productos:0};
+    if(!byBarbero[n]) byBarbero[n]={ventas:0,comision:0,comisionEF:0,propinas:0,propinasEF:0,productos:0,productosEF:0};
+    const esEF = v.forma_pago==='EF';
     if(v.tipo==='servicio'){
       byBarbero[n].ventas+=(v.monto||0);
-      // comision del servicio
       const svc=servicios.find(s=>s.nombre===v.servicio_producto);
       const pct=(svc?.comision||50)/100;
-      byBarbero[n].comision+=(v.monto||0)*pct;
+      const com=(v.monto||0)*pct;
+      byBarbero[n].comision+=com;
+      if(esEF) byBarbero[n].comisionEF+=com;
     }
-    if(v.tipo==='PRODUCTO') byBarbero[n].productos+=(v.monto||0);
+    if(v.tipo==='PRODUCTO'){
+      byBarbero[n].productos+=(v.monto||0);
+      if(esEF) byBarbero[n].productosEF+=(v.monto||0);
+    }
     byBarbero[n].propinas+=(v.propina||0);
+    if(esEF) byBarbero[n].propinasEF+=(v.propina||0);
   });
   Object.keys(byBarbero).forEach(k=>{
-    byBarbero[k].total=byBarbero[k].comision+byBarbero[k].propinas+byBarbero[k].productos*0.1;
+    byBarbero[k].total   = byBarbero[k].comision    + byBarbero[k].propinas    + byBarbero[k].productos*0.1;
+    byBarbero[k].totalEF = byBarbero[k].comisionEF  + byBarbero[k].propinasEF  + byBarbero[k].productosEF*0.1;
   });
   const barMax=Math.max(...Object.values(byBarbero).map(b=>b.ventas),1);
 
@@ -378,19 +385,37 @@ async function loadDashboard(){
           <div class="bar-chart-val">${fmtCLP(d.ventas)}</div>
         </div>`).join('')||'<p style="color:#64748B;font-size:12px">Sin datos</p>'}
     </div>
-    <div class="card">
+    <div class="card" style="overflow-x:auto">
       <div class="card-title">Liquidaciones por Barbero</div>
       <table>
-        <thead><tr><th>Barbero</th><th>Comisión Svc</th><th>10% Prod.</th><th>Propinas</th><th>Total</th></tr></thead>
+        <thead>
+          <tr>
+            <th rowspan="2" style="vertical-align:middle">Barbero</th>
+            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">Comisión Svc</th>
+            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">10% Prod.</th>
+            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">Propinas</th>
+            <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">Total</th>
+          </tr>
+          <tr>
+            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
+            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
+            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
+            <th style="color:var(--green);font-size:10px">EF</th><th style="color:#64748B;font-size:10px">Total</th>
+          </tr>
+        </thead>
         <tbody>
           ${Object.entries(byBarbero).filter(([n])=>!n.toUpperCase().includes('PISTON')).sort((a,b)=>b[1].total-a[1].total).map(([n,d])=>`
           <tr>
             <td><strong>${n.split(' ')[0]}</strong></td>
-            <td>${fmtCLP(d.comision)}</td>
+            <td style="color:var(--green)">${d.comisionEF>0?fmtCLP(Math.round(d.comisionEF)):'—'}</td>
+            <td>${fmtCLP(Math.round(d.comision))}</td>
+            <td style="color:var(--green)">${d.productosEF>0?fmtCLP(Math.round(d.productosEF*0.1)):'—'}</td>
             <td>${fmtCLP(Math.round(d.productos*0.1))}</td>
+            <td style="color:var(--green)">${d.propinasEF>0?fmtCLP(d.propinasEF):'—'}</td>
             <td>${fmtCLP(d.propinas)}</td>
+            <td style="color:var(--green);font-weight:700">${d.totalEF>0?fmtCLP(Math.round(d.totalEF)):'—'}</td>
             <td><strong>${fmtCLP(Math.round(d.total))}</strong></td>
-          </tr>`).join('')||'<tr><td colspan="5" style="color:#64748B">Sin datos</td></tr>'}
+          </tr>`).join('')||'<tr><td colspan="9" style="color:#64748B">Sin datos</td></tr>'}
         </tbody>
       </table>
     </div>
