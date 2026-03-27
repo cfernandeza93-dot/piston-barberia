@@ -397,29 +397,7 @@ async function loadDashboard(){
     <div class="card" style="overflow-x:auto">
       <div class="card-title">Liquidaciones por Barbero — Servicios</div>
       <table>
-        <thead>
-          <tr>
-            <th rowspan="2" style="vertical-align:bottom;min-width:80px">Barbero</th>
-            <th colspan="3" style="text-align:center;background:#F0FDF4;color:var(--green);border-left:2px solid #86EFAC">
-              💵 Efectivo (EF)
-            </th>
-            <th colspan="3" style="text-align:center;background:#EFF6FF;color:var(--blue);border-left:2px solid #93C5FD">
-              💳 Tarjeta / Transferencia (TK · TRF · MP)
-            </th>
-            <th rowspan="2" style="vertical-align:bottom;text-align:right;background:#F8FAFC;border-left:2px solid var(--border)">
-              Total
-            </th>
-          </tr>
-          <tr>
-            <th style="background:#F0FDF4;color:#64748B;font-size:10px;border-left:2px solid #86EFAC">Comisión</th>
-            <th style="background:#F0FDF4;color:#64748B;font-size:10px">Propina</th>
-            <th style="background:#F0FDF4;color:var(--green);font-size:11px;font-weight:700">Total EF</th>
-            <th style="background:#EFF6FF;color:#64748B;font-size:10px;border-left:2px solid #93C5FD">Comisión</th>
-            <th style="background:#EFF6FF;color:#64748B;font-size:10px">Propina</th>
-            <th style="background:#EFF6FF;color:var(--blue);font-size:11px;font-weight:700">Total TK</th>
-            <th style="background:#F8FAFC;border-left:2px solid var(--border)"></th>
-          </tr>
-        </thead>
+        <thead><tr><th>Barbero</th><th>Comisión Svc</th><th>Propinas</th><th>Total</th></tr></thead>
         <tbody>
           ${Object.entries(byBarbero)
             .filter(([n])=>!n.toUpperCase().includes('PISTON'))
@@ -427,37 +405,11 @@ async function loadDashboard(){
             .map(([n,d])=>`
           <tr>
             <td><strong>${n.split(' ')[0]}</strong></td>
-            <td style="background:#F0FDF4;border-left:2px solid #86EFAC">${d.efMonto>0?fmtCLP(d.efMonto):'—'}</td>
-            <td style="background:#F0FDF4">${d.efPropina>0?fmtCLP(d.efPropina):'—'}</td>
-            <td style="background:#F0FDF4;font-weight:700;color:var(--green)">${d.efTotal>0?fmtCLP(d.efTotal):'—'}</td>
-            <td style="background:#EFF6FF;border-left:2px solid #93C5FD">${d.tkMonto>0?fmtCLP(d.tkMonto):'—'}</td>
-            <td style="background:#EFF6FF">${d.tkPropina>0?fmtCLP(d.tkPropina):'—'}</td>
-            <td style="background:#EFF6FF;font-weight:700;color:var(--blue)">${d.tkTotal>0?fmtCLP(d.tkTotal):'—'}</td>
-            <td style="background:#F8FAFC;border-left:2px solid var(--border);font-weight:700;font-size:14px">${fmtCLP(d.total)}</td>
-          </tr>`).join('')||'<tr><td colspan="8" style="color:#64748B">Sin datos</td></tr>'}
+            <td>${fmtCLP(d.comision)}</td>
+            <td>${fmtCLP(d.propinas)}</td>
+            <td><strong>${fmtCLP(d.total)}</strong></td>
+          </tr>`).join('')||'<tr><td colspan="4" style="color:#64748B">Sin datos</td></tr>'}
         </tbody>
-        <tfoot>
-          ${(()=>{
-            const rows=Object.entries(byBarbero).filter(([n])=>!n.toUpperCase().includes('PISTON'));
-            const sumEfM=rows.reduce((s,[,d])=>s+d.efMonto,0);
-            const sumEfP=rows.reduce((s,[,d])=>s+d.efPropina,0);
-            const sumEfT=rows.reduce((s,[,d])=>s+d.efTotal,0);
-            const sumTkM=rows.reduce((s,[,d])=>s+d.tkMonto,0);
-            const sumTkP=rows.reduce((s,[,d])=>s+d.tkPropina,0);
-            const sumTkT=rows.reduce((s,[,d])=>s+d.tkTotal,0);
-            const sumT=rows.reduce((s,[,d])=>s+d.total,0);
-            return `<tr style="font-weight:700;background:#F1F5F9">
-              <td>TOTAL</td>
-              <td style="background:#DCFCE7;border-left:2px solid #86EFAC">${fmtCLP(sumEfM)}</td>
-              <td style="background:#DCFCE7">${fmtCLP(sumEfP)}</td>
-              <td style="background:#DCFCE7;color:var(--green)">${fmtCLP(sumEfT)}</td>
-              <td style="background:#DBEAFE;border-left:2px solid #93C5FD">${fmtCLP(sumTkM)}</td>
-              <td style="background:#DBEAFE">${fmtCLP(sumTkP)}</td>
-              <td style="background:#DBEAFE;color:var(--blue)">${fmtCLP(sumTkT)}</td>
-              <td style="background:#F1F5F9;border-left:2px solid var(--border);font-size:15px">${fmtCLP(sumT)}</td>
-            </tr>`;
-          })()}
-        </tfoot>
       </table>
     </div>
   </div>
@@ -496,6 +448,71 @@ async function loadDashboard(){
         ${renderStockBajoTabla(stockBajo)}
       </div>
     </div>
+  </div>
+
+  <!-- Análisis por día de semana -->
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">Comportamiento de Ventas por Día de la Semana</div>
+    ${(()=>{
+      const diasOrden=['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+      const normDia = d => {
+        if(!d) return null;
+        const s=String(d).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+        const map={lunes:'Lunes',martes:'Martes',miercoles:'Miércoles',miercoles:'Miércoles',jueves:'Jueves',viernes:'Viernes',sabado:'Sábado',sabado:'Sábado',domingo:'Domingo'};
+        return map[s]||null;
+      };
+      const byDia={};
+      diasOrden.forEach(d=>{ byDia[d]={total:0,count:0,fechas:new Set()}; });
+      vFilt.forEach(v=>{
+        const d=normDia(v.dia_semana);
+        if(!d) return;
+        byDia[d].total+=(v.total||0);
+        byDia[d].count++;
+        if(v.fecha) byDia[d].fechas.add(v.fecha);
+      });
+      diasOrden.forEach(d=>{
+        const dias=byDia[d].fechas.size||1;
+        byDia[d].promedio=Math.round(byDia[d].total/dias);
+        byDia[d].diasConVentas=byDia[d].fechas.size;
+      });
+      const maxProm=Math.max(...diasOrden.map(d=>byDia[d].promedio),1);
+      const maxTotal=Math.max(...diasOrden.map(d=>byDia[d].total),1);
+      const colores=['#6366F1','#EC4899','#F59E0B','#10B981','#3B82F6','#1E6FD9','#8B5CF6'];
+      return \`
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:20px">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:12px;text-transform:uppercase;letter-spacing:.3px">Promedio por día</div>
+          \${diasOrden.map((d,i)=>\`
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+            <div style="width:82px;font-size:12px;font-weight:500;color:#374151;text-align:right;flex-shrink:0">\${d}</div>
+            <div style="flex:1;height:20px;background:#F1F5F9;border-radius:4px;overflow:hidden">
+              <div style="height:100%;width:\${Math.round(byDia[d].promedio/maxProm*100)}%;background:\${colores[i]};border-radius:4px"></div>
+            </div>
+            <div style="width:88px;font-size:12px;font-weight:700;color:#1E293B;flex-shrink:0">\${fmtCLP(byDia[d].promedio)}</div>
+            <div style="width:52px;font-size:10px;color:#94A3B8;flex-shrink:0">\${byDia[d].diasConVentas}d</div>
+          </div>\`).join('')}
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:#64748B;margin-bottom:12px;text-transform:uppercase;letter-spacing:.3px">Total acumulado</div>
+          \${diasOrden.map((d,i)=>\`
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+            <div style="width:82px;font-size:12px;font-weight:500;color:#374151;text-align:right;flex-shrink:0">\${d}</div>
+            <div style="flex:1;height:20px;background:#F1F5F9;border-radius:4px;overflow:hidden">
+              <div style="height:100%;width:\${Math.round(byDia[d].total/maxTotal*100)}%;background:\${colores[i]};border-radius:4px;opacity:.7"></div>
+            </div>
+            <div style="width:88px;font-size:12px;font-weight:700;color:#1E293B;flex-shrink:0">\${fmtCLP(byDia[d].total)}</div>
+            <div style="width:52px;font-size:10px;color:#94A3B8;flex-shrink:0">\${byDia[d].count} txn</div>
+          </div>\`).join('')}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);align-items:center">
+        <span style="font-size:11px;color:#64748B;font-weight:600">Ranking (promedio):</span>
+        \${diasOrden.slice().sort((a,b)=>byDia[b].promedio-byDia[a].promedio).map((d,i)=>\`
+          <span style="padding:3px 10px;background:\${i===0?'#FEF3C7':i===1?'#F1F5F9':'#F8FAFC'};border-radius:99px;font-size:11px;font-weight:600;color:\${i===0?'#B45309':'#475569'}">
+            \${i===0?'🥇':i===1?'🥈':i===2?'🥉':String(i+1)+'.'} \${d} \${fmtCLP(byDia[d].promedio)}
+          </span>\`).join('')}
+      </div>\`;
+    })()}
   </div>
   `;
 
