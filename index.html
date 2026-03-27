@@ -249,10 +249,8 @@ async function loadDashboard(){
   showOverlay();
   await loadCatalogos();
   // Fetch all ventas & gastos
-  // Fetch ventas del año seleccionado (o todos si anio=0)
-  let qVentas = sb.from('ventas').select('*').limit(5000);
-  if(dshFilters.anio>0) qVentas = qVentas.eq('anio', dshFilters.anio);
-  const {data:ventas, error:vErr} = await qVentas;
+  // Usar RPC para obtener ventas sin límite de filas PostgREST
+  const {data:ventas} = await sb.rpc('get_ventas_anio', {p_anio: dshFilters.anio});
   const {data:gastos} = await sb.from('gastos').select('*').limit(5000);
   hideOverlay();
 
@@ -260,9 +258,7 @@ async function loadDashboard(){
   const {data:aniosData} = await sb.from('ventas').select('anio').limit(5000);
   const anios=[...new Set((aniosData||[]).map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
 
-  // Debug temporal — confirma versión y datos cargados
-  console.log('v28mar — ventas cargadas:', (ventas||[]).length, '| filtro:', dshFilters);
-  console.log('Meses en datos:', [...new Set((ventas||[]).map(v=>v.n_mes))].sort());
+  console.log('v28mar-rpc — ventas:', (ventas||[]).length, 'mes:', dshFilters.mes, 'anio:', dshFilters.anio);
 
   let vFilt = (ventas||[]);
   let gFilt = (gastos||[]).filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==dshFilters.anio);
