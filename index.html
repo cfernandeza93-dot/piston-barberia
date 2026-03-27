@@ -134,7 +134,7 @@ tr:hover td{background:#F8FAFC}
   <div class="topbar">
     <div>
       <div class="topbar-title">✂ PÍSTON BARBERÍA</div>
-      <div class="topbar-subtitle">Sistema de Gestión · v28mar-json</div>
+      <div class="topbar-subtitle">Sistema de Gestión · v28mar-b</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <span id="topbarDate" style="font-size:11px;color:#94A3B8"></span>
@@ -912,8 +912,8 @@ let editingVentaId=null;
 async function loadHistorial(){
   showOverlay();
   await loadCatalogos();
-  const {data}=await sb.from('ventas').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false}).range(0,4999);
-  hData=data||[];
+  const {data:raw}=await sb.rpc('get_ventas_historial');
+  hData=raw||[];
   hideOverlay();
   renderHistorial();
 }
@@ -1596,206 +1596,221 @@ let concilState = { mes: new Date().getMonth()+1, anio: new Date().getFullYear()
 
 async function loadConciliacion(){
   showOverlay();
-  // Fetch only TK ventas
-  const {data:vtk} = await sb.from('ventas').select('*').eq('forma_pago','TK').order('fecha',{ascending:false}).range(0,4999);
+  const {data:vtk} = await sb.rpc('get_ventas_tk_anio', {p_anio: concilState.anio, p_mes: concilState.mes});
   concilState.ventasTK = vtk||[];
+  // Cargar GetNet guardado para este mes
+  const {data:gn} = await sb.from('getnet_transacciones')
+    .select('*').eq('anio', concilState.anio).eq('mes', concilState.mes)
+    .order('fecha_venta');
+  concilState.getnetRows = (gn||[]).map(r=>({
+    cod: r.cod_aut, fecha: r.fecha_venta, marca: r.marca, tipo: r.tipo,
+    monto: r.valor_venta, propina: r.propina, total: r.valor_transaccion, estado: r.estado
+  }));
   hideOverlay();
   renderConciliacion();
 }
 
 function renderConciliacion(){
-  const anios = [...new Set(concilState.ventasTK.map(v=>v.anio))].filter(Boolean).sort((a,b)=>b-a);
+  const anios = [...new Set(concilState.ventasTK.map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
   if(!anios.length) anios.push(new Date().getFullYear());
   const anioOpts = anios.map(a=>`<option value="${a}" ${concilState.anio==a?'selected':''}>${a}</option>`).join('');
   const mesOpts  = MESES.map((m,i)=>`<option value="${i+1}" ${concilState.mes==i+1?'selected':''}>${m}</option>`).join('');
-
-  // Filter TK ventas for selected month
-  const vtkMes = concilState.ventasTK.filter(v=>v.anio==concilState.anio && v.n_mes==concilState.mes);
+  const tieneGetnet = concilState.getnetRows.length > 0;
 
   document.getElementById('mainContent').innerHTML=`
   <div class="sec-title">Conciliación GetNet</div>
 
-  <!-- Filtro mes -->
+  <!-- Filtro período -->
   <div class="section-card" style="margin-bottom:16px">
     <div class="card-title">Período a conciliar</div>
     <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-      <select id="concilAnio" onchange="window._bridge.concilSetAnio(this.value)" style="padding:7px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px">
-        ${anioOpts}
-      </select>
-      <select id="concilMes" onchange="window._bridge.concilSetMes(this.value)" style="padding:7px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px">
-        ${mesOpts}
-      </select>
-      <span class="badge badge-blue">📋 ${vtkMes.length} ventas TK en sistema para ${MESES[concilState.mes-1]} ${concilState.anio}</span>
+      <select id="concilAnio" onchange="window._bridge.concilSetAnio(this.value)" style="padding:7px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px">${anioOpts}</select>
+      <select id="concilMes" onchange="window._bridge.concilSetMes(this.value)" style="padding:7px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px">${mesOpts}</select>
+      <span class="badge badge-blue">📋 ${concilState.ventasTK.length} ventas TK — ${MESES[concilState.mes-1]} ${concilState.anio}</span>
+      ${tieneGetnet?`<span class="badge badge-green">✓ GetNet cargado: ${concilState.getnetRows.length} transacciones</span>`:'<span class="badge badge-amber">⚠ Sin datos GetNet para este mes</span>'}
     </div>
   </div>
 
   <!-- Cargar archivo GetNet -->
   <div class="section-card" style="margin-bottom:16px">
-    <div class="card-title">Cargar archivo GetNet (XLSX)</div>
-    <div style="color:#64748B;font-size:12px;margin-bottom:10px;line-height:1.6">
-      Sube el reporte mensual de GetNet. Se usará la columna <strong>COD.AUT</strong> para cruzar con las ventas TK del sistema.<br>
-      Se comparan: <strong>VALOR VENTA</strong> (= monto servicio) y <strong>PROPINA</strong> de cada transacción.
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div>
+        <div class="card-title" style="margin:0">Historial GetNet — ${MESES[concilState.mes-1]} ${concilState.anio}</div>
+        <div style="font-size:11px;color:#64748B;margin-top:3px">
+          ${tieneGetnet
+            ? `Datos guardados el ${concilState.getnetRows.length} txn. Puedes reemplazarlos subiendo un nuevo archivo.`
+            : 'Sube el reporte XLSX de GetNet — se guardará en la BD para no tener que subirlo de nuevo.'}
+        </div>
+      </div>
+      ${tieneGetnet?`<button class="btn btn-danger btn-sm" onclick="window._bridge.borrarGetnet()">🗑 Borrar datos del mes</button>`:''}
     </div>
-    <input type="file" id="concilFile" accept=".xlsx,.xls,.csv" onchange="processConcilFile(this)">
-    <div id="concilLoading" style="display:none;color:#64748B;font-size:12px;margin-top:8px">⏳ Procesando...</div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <input type="file" id="concilFile" accept=".xlsx,.xls,.csv" onchange="processConcilFile(this)">
+      <div id="concilLoading" style="display:none;color:#64748B;font-size:12px">⏳ Procesando y guardando...</div>
+    </div>
   </div>
 
-  <div id="concilResult"></div>
+  <!-- Resultado conciliación -->
+  <div id="concilResult">
+    ${tieneGetnet ? buildConcilResult() : '<div class="card" style="text-align:center;padding:30px;color:#64748B">Sube el archivo GetNet para ejecutar la conciliación</div>'}
+  </div>
 
   <!-- Tabla ventas TK del mes -->
   <div class="card" style="margin-top:16px">
-    <div class="card-title">Ventas TK en sistema — ${MESES[concilState.mes-1]} ${concilState.anio} (${vtkMes.length})</div>
-    <div style="overflow-x:auto">
+    <div class="card-title">Ventas TK sistema — ${MESES[concilState.mes-1]} ${concilState.anio} (${concilState.ventasTK.length})</div>
+    <div style="overflow-x:auto;max-height:300px">
     <table>
       <thead><tr><th>Fecha</th><th>Barbero</th><th>Servicio/Producto</th><th>Monto</th><th>Propina</th><th>Total</th><th>Cod. Auth</th></tr></thead>
       <tbody>
-        ${vtkMes.length===0
-          ? '<tr><td colspan="7" style="color:#64748B;text-align:center;padding:20px">Sin ventas TK para este mes</td></tr>'
-          : vtkMes.map(v=>`<tr>
-              <td>${v.fecha||''}</td>
-              <td>${(v.barbero_nombre||'').split(' ')[0]}</td>
-              <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.servicio_producto||''}</td>
-              <td>${fmtCLP(v.monto)}</td>
-              <td>${fmtCLP(v.propina)}</td>
-              <td>${fmtCLP(v.total)}</td>
-              <td style="font-family:monospace">${v.cod_autorizacion||'—'}</td>
-            </tr>`).join('')}
+        ${concilState.ventasTK.length===0
+          ?'<tr><td colspan="7" style="color:#64748B;text-align:center;padding:20px">Sin ventas TK para este mes</td></tr>'
+          :concilState.ventasTK.map(v=>`<tr>
+            <td>${v.fecha||''}</td>
+            <td>${(v.barbero_nombre||'').split(' ')[0]}</td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.servicio_producto||''}</td>
+            <td>${fmtCLP(v.monto)}</td><td>${fmtCLP(v.propina)}</td><td>${fmtCLP(v.total)}</td>
+            <td style="font-family:monospace;font-size:11px">${v.cod_autorizacion||'—'}</td>
+          </tr>`).join('')}
       </tbody>
     </table>
     </div>
   </div>`;
 
-  window._bridge.concilSetAnio = v=>{ concilState.anio=Number(v); concilState.getnetRows=[]; concilState.resultados=[]; renderConciliacion(); };
-  window._bridge.concilSetMes  = v=>{ concilState.mes=Number(v);  concilState.getnetRows=[]; concilState.resultados=[]; renderConciliacion(); };
+  window._bridge.concilSetAnio = v=>{ concilState.anio=Number(v); loadConciliacion(); };
+  window._bridge.concilSetMes  = v=>{ concilState.mes=Number(v);  loadConciliacion(); };
+  window._bridge.borrarGetnet  = async()=>{
+    if(!confirm(`¿Borrar los datos GetNet de ${MESES[concilState.mes-1]} ${concilState.anio}?`)) return;
+    showOverlay();
+    await sb.from('getnet_transacciones').delete().eq('anio',concilState.anio).eq('mes',concilState.mes);
+    concilState.getnetRows=[];
+    hideOverlay();
+    toast('✓ Datos GetNet eliminados');
+    renderConciliacion();
+  };
+
+  if(tieneGetnet) runConciliacion();
 }
 
+function buildConcilResult(){ return '<div id="concilResultInner"></div>'; }
+
 async function processConcilFile(input){
-  const file = input.files[0];
-  if(!file) return;
+  const file=input.files[0]; if(!file) return;
   document.getElementById('concilLoading').style.display='block';
-  document.getElementById('concilResult').innerHTML='';
-
-  try {
-    const XL = await getXLSX(); // reuse SheetJS loader from importar module
+  try{
+    const XL = await getXLSX();
     const buf = await file.arrayBuffer();
-    const wb  = XL.read(buf, {type:'array'});
+    const wb  = XL.read(buf,{type:'array'});
     const ws  = wb.Sheets[wb.SheetNames[0]];
-    const raw = XL.utils.sheet_to_json(ws, {defval:''});
+    const raw = XL.utils.sheet_to_json(ws,{defval:''});
 
-    // Normalize GetNet column names (handles accents, spaces)
-    const normalize = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[\s.]/g,'').toUpperCase();
-
-    // Map columns by normalized name
-    function getGNCol(row, ...keys){
+    const normalize = s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[\s.]/g,'').toUpperCase();
+    function getGN(row,...keys){
       for(const k of keys){
-        const nk = normalize(k);
-        const found = Object.keys(row).find(rk=>normalize(rk)===nk);
-        if(found!==undefined && row[found]!=='') return String(row[found]).trim();
+        const nk=normalize(k);
+        const found=Object.keys(row).find(rk=>normalize(rk)===nk);
+        if(found!==undefined&&row[found]!=='') return String(row[found]).trim();
       }
       return '';
     }
 
-    // Parse GetNet rows
-    concilState.getnetRows = raw.map(r=>({
-      cod:       String(getGNCol(r,'COD.AUT','CODAUT','COD AUT')||'').trim(),
-      fecha:     getGNCol(r,'FECHA VENTA','FECHAVENTA'),
-      monto:     Number(getGNCol(r,'VALOR VENTA','VALORVENTA')||0),
-      propina:   Number(getGNCol(r,'PROPINA')||0),
-      total:     Number(getGNCol(r,'VALOR TRANSACCION','VALORTRANSACCION','VALOR TRANSACCIÓN')||0),
-      tipo:      getGNCol(r,'TIPO'),
-      estado:    getGNCol(r,'ESTADO TRANSACCION','ESTADOTRANSACCION','ESTADO TRANSACCIÓN'),
-      marca:     getGNCol(r,'MARCA'),
-    })).filter(r=>r.cod && r.cod!=='-');
+    // Parsear y guardar en Supabase
+    const rows = raw.map(r=>({
+      cod_aut:          String(getGN(r,'COD.AUT','CODAUT')||'').trim(),
+      fecha_venta:      parseFechaGetnet(getGN(r,'FECHA VENTA','FECHAVENTA')),
+      mes:              concilState.mes,
+      anio:             concilState.anio,
+      marca:            getGN(r,'MARCA')||null,
+      tipo:             getGN(r,'TIPO')||null,
+      propina:          Number(getGN(r,'PROPINA')||0),
+      valor_venta:      Number(getGN(r,'VALOR VENTA','VALORVENTA')||0),
+      valor_transaccion:Number(getGN(r,'VALOR TRANSACCION','VALORTRANSACCION','VALOR TRANSACCIÓN')||0),
+      estado:           getGN(r,'ESTADO TRANSACCION','ESTADOTRANSACCION','ESTADO TRANSACCIÓN')||null,
+      archivo_origen:   file.name,
+    })).filter(r=>r.cod_aut&&r.cod_aut!=='-');
 
+    if(!rows.length){ toast('Sin transacciones válidas en el archivo','error'); document.getElementById('concilLoading').style.display='none'; return; }
+
+    showOverlay();
+    // Borrar datos existentes del mes y reemplazar
+    await sb.from('getnet_transacciones').delete().eq('anio',concilState.anio).eq('mes',concilState.mes);
+    // Insertar en lotes de 100
+    for(let i=0;i<rows.length;i+=100){
+      await sb.from('getnet_transacciones').insert(rows.slice(i,i+100));
+    }
+
+    concilState.getnetRows = rows.map(r=>({
+      cod:r.cod_aut, fecha:r.fecha_venta, marca:r.marca, tipo:r.tipo,
+      monto:r.valor_venta, propina:r.propina, total:r.valor_transaccion, estado:r.estado
+    }));
+    hideOverlay();
     document.getElementById('concilLoading').style.display='none';
-    runConciliacion();
-  } catch(err){
+    toast(`✓ ${rows.length} transacciones GetNet guardadas`);
+    renderConciliacion();
+  }catch(err){
+    hideOverlay();
     document.getElementById('concilLoading').style.display='none';
-    document.getElementById('concilResult').innerHTML=`<div style="color:var(--red);padding:10px">Error al leer archivo: ${err.message}</div>`;
-    console.error(err);
+    toast('Error: '+err.message,'error'); console.error(err);
   }
 }
 
-function normCod(v){
-  // Normalize cod autorizacion: remove leading zeros, strip spaces
-  return String(v||'').trim().replace(/^0+/,'');
+function parseFechaGetnet(v){
+  if(!v) return null;
+  const s=String(v).trim();
+  // DD/MM/YYYY HH:MM:SS
+  const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if(m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return null;
 }
+
+function normCod(v){ return String(v||'').trim().replace(/^0+/,''); }
 
 function runConciliacion(){
   const { getnetRows, mes, anio } = concilState;
+  const vtkMes = concilState.ventasTK;
 
-  // Filter system TK ventas for selected month
-  const vtkMes = concilState.ventasTK.filter(v=>v.anio==anio && v.n_mes==mes);
-
-  // Group system ventas by normalized cod_autorizacion (1 cod puede tener N rows)
-  const ventasByCod = {};
+  const ventasByCod={};
   vtkMes.forEach(v=>{
     if(!v.cod_autorizacion) return;
-    const k = normCod(v.cod_autorizacion);
+    const k=normCod(v.cod_autorizacion);
     if(!ventasByCod[k]) ventasByCod[k]=[];
     ventasByCod[k].push(v);
   });
 
-  // Also build a set of all system cods (for "en sistema pero no en GetNet")
-  const getnetCods = new Set(getnetRows.map(r=>normCod(r.cod)));
-
-  // --- Cross GetNet vs Sistema ---
-  let ok=0, diffs=0, missing=0;
-  const resultados = getnetRows.map(r=>{
-    const codN = normCod(r.cod);
-    const vsys = ventasByCod[codN];
-
-    if(!vsys){
-      missing++;
-      return { ...r, codN, estado:'FALTANTE EN SISTEMA', montoSys:null, propinaSys:null, totalSys:null, vsys:null };
-    }
-
-    const montoSys  = vsys.reduce((s,v)=>s+(v.monto||0),0);
-    const propinaSys= vsys.reduce((s,v)=>s+(v.propina||0),0);
-    const totalSys  = vsys.reduce((s,v)=>s+(v.total||0),0);
-
-    // Compare VALOR VENTA (GetNet) vs monto sistema
-    // Compare PROPINA (GetNet) vs propina sistema
-    const diffMonto  = Math.abs(r.monto - montoSys);
-    const diffPropina= Math.abs(r.propina - propinaSys);
-
-    if(diffMonto > 100 || diffPropina > 100){
-      diffs++;
-      return { ...r, codN, estado:'DIFERENCIA', montoSys, propinaSys, totalSys, vsys,
-               diffMonto, diffPropina };
-    }
-
-    ok++;
-    return { ...r, codN, estado:'OK', montoSys, propinaSys, totalSys, vsys, diffMonto:0, diffPropina:0 };
+  const getnetCods=new Set(getnetRows.map(r=>normCod(r.cod)));
+  let ok=0,diffs=0,missing=0;
+  const resultados=getnetRows.map(r=>{
+    const codN=normCod(r.cod);
+    const vsys=ventasByCod[codN];
+    if(!vsys){ missing++; return{...r,codN,estado:'FALTANTE EN SISTEMA',montoSys:null,propinaSys:null,totalSys:null,vsys:null}; }
+    const montoSys=vsys.reduce((s,v)=>s+(v.monto||0),0);
+    const propinaSys=vsys.reduce((s,v)=>s+(v.propina||0),0);
+    const totalSys=vsys.reduce((s,v)=>s+(v.total||0),0);
+    if(Math.abs(r.monto-montoSys)>100||Math.abs(r.propina-propinaSys)>100){ diffs++; return{...r,codN,estado:'DIFERENCIA',montoSys,propinaSys,totalSys,vsys}; }
+    ok++; return{...r,codN,estado:'OK',montoSys,propinaSys,totalSys,vsys};
   });
 
-  // --- Ventas TK en sistema sin match en GetNet ---
-  const sinGetNet = Object.entries(ventasByCod)
-    .filter(([k])=>!getnetCods.has(k))
-    .map(([k,vs])=>({
-      cod: k, codN: k, estado:'EN SISTEMA SIN GETNET',
-      monto: vs.reduce((s,v)=>s+(v.monto||0),0),
-      propina: vs.reduce((s,v)=>s+(v.propina||0),0),
-      total: vs.reduce((s,v)=>s+(v.total||0),0),
-      montoSys: null, propinaSys: null, totalSys: null, vsys: vs,
-      fecha: vs[0].fecha, marca:'—'
-    }));
+  const sinGetNet=Object.entries(ventasByCod).filter(([k])=>!getnetCods.has(k)).map(([k,vs])=>({
+    cod:k,codN:k,estado:'EN SISTEMA SIN GETNET',
+    monto:vs.reduce((s,v)=>s+(v.monto||0),0),propina:vs.reduce((s,v)=>s+(v.propina||0),0),
+    total:vs.reduce((s,v)=>s+(v.total||0),0),montoSys:null,propinaSys:null,totalSys:null,vsys:vs,
+    fecha:vs[0].fecha,marca:'—'
+  }));
+  concilState.resultados=resultados;
 
-  concilState.resultados = resultados;
+  const totalGetNet=getnetRows.reduce((s,r)=>s+r.total,0);
+  const totalSistema=vtkMes.reduce((s,v)=>s+(v.total||0),0);
+  const diffTotal=totalGetNet-totalSistema;
 
-  // --- Resumen financiero ---
-  const totalGetNet  = getnetRows.reduce((s,r)=>s+r.total,0);
-  const totalSistema = vtkMes.reduce((s,v)=>s+(v.total||0),0);
-  const diffTotal    = totalGetNet - totalSistema;
-
-  document.getElementById('concilResult').innerHTML=`
-  <!-- Resumen -->
+  const target=document.getElementById('concilResult');
+  if(!target) return;
+  target.innerHTML=`
   <div class="grid-4" style="margin-bottom:16px">
     <div class="metric"><div class="metric-label">GetNet (${getnetRows.length} txn)</div><div class="metric-value">${fmtCLP(totalGetNet)}</div></div>
     <div class="metric"><div class="metric-label">Sistema TK (${vtkMes.length} reg)</div><div class="metric-value">${fmtCLP(totalSistema)}</div></div>
     <div class="metric"><div class="metric-label">Diferencia</div><div class="metric-value" style="color:${Math.abs(diffTotal)<100?'var(--green)':'var(--red)'}">${diffTotal>=0?'+':''}${fmtCLP(diffTotal)}</div></div>
-    <div class="metric">
-      <div class="metric-label">Estado</div>
+    <div class="metric"><div class="metric-label">Estado</div>
       <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
         <span class="badge badge-green">✓ OK: ${ok}</span>
         <span class="badge badge-amber">⚠ Diferencia: ${diffs}</span>
@@ -1804,34 +1819,23 @@ function runConciliacion(){
       </div>
     </div>
   </div>
-
-  <!-- Tabla resultados -->
-  <div class="card" style="margin-bottom:16px">
+  <div class="card">
     <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-      <span>Resultado cruce — ${MESES[mes-1]} ${anio}</span>
+      <span>Resultado — ${MESES[mes-1]} ${anio}</span>
       ${(diffs+missing+sinGetNet.length)>0?`<button class="btn btn-ghost btn-sm" onclick="exportConcilErrors()">⬇ Exportar errores CSV</button>`:''}
     </div>
     <div style="overflow-x:auto">
     <table>
-      <thead><tr>
-        <th>Cod. Auth (GetNet)</th><th>Fecha</th><th>Marca</th>
-        <th>Monto GetNet</th><th>Monto Sistema</th>
-        <th>Propina GetNet</th><th>Propina Sistema</th>
-        <th>Total GetNet</th><th>Total Sistema</th>
-        <th>Estado</th>
-      </tr></thead>
+      <thead><tr><th>Cod. Auth</th><th>Fecha</th><th>Marca</th><th>Monto GetNet</th><th>Monto Sis.</th><th>Propina GetNet</th><th>Propina Sis.</th><th>Total GetNet</th><th>Total Sis.</th><th>Estado</th></tr></thead>
       <tbody>
-        ${[...resultados, ...sinGetNet].map(r=>`
+        ${[...resultados,...sinGetNet].map(r=>`
         <tr class="${r.estado==='OK'?'concil-match':r.estado==='DIFERENCIA'?'concil-diff':'concil-missing'}">
           <td style="font-family:monospace;font-size:11px">${r.cod}</td>
-          <td>${r.fecha?String(r.fecha).split(' ')[0]:''}</td>
+          <td>${r.fecha?String(r.fecha).split('T')[0]:''}</td>
           <td>${r.marca||'—'}</td>
-          <td>${r.monto!=null?fmtCLP(r.monto):'—'}</td>
-          <td>${r.montoSys!=null?fmtCLP(r.montoSys):'—'}</td>
-          <td>${r.propina!=null?fmtCLP(r.propina):'—'}</td>
-          <td>${r.propinaSys!=null?fmtCLP(r.propinaSys):'—'}</td>
-          <td>${r.total!=null?fmtCLP(r.total):'—'}</td>
-          <td>${r.totalSys!=null?fmtCLP(r.totalSys):'—'}</td>
+          <td>${r.monto!=null?fmtCLP(r.monto):'—'}</td><td>${r.montoSys!=null?fmtCLP(r.montoSys):'—'}</td>
+          <td>${r.propina!=null?fmtCLP(r.propina):'—'}</td><td>${r.propinaSys!=null?fmtCLP(r.propinaSys):'—'}</td>
+          <td>${r.total!=null?fmtCLP(r.total):'—'}</td><td>${r.totalSys!=null?fmtCLP(r.totalSys):'—'}</td>
           <td><span class="badge ${r.estado==='OK'?'badge-green':r.estado==='DIFERENCIA'?'badge-amber':r.estado==='EN SISTEMA SIN GETNET'?'badge-purple':'badge-red'}" style="white-space:nowrap">${r.estado}</span></td>
         </tr>`).join('')}
       </tbody>
@@ -1841,18 +1845,16 @@ function runConciliacion(){
 }
 
 function exportConcilErrors(){
-  const errs = concilState.resultados.filter(r=>r.estado!=='OK');
-  if(!errs.length){ toast('No hay errores','info'); return; }
+  const errs=concilState.resultados.filter(r=>r.estado!=='OK');
+  if(!errs.length){toast('No hay errores','info');return;}
   const hdr=['Cod. Auth','Fecha','Marca','Monto GetNet','Monto Sistema','Propina GetNet','Propina Sistema','Total GetNet','Total Sistema','Estado'];
-  const lines=[hdr.join(';'),...errs.map(r=>[
-    r.cod, r.fecha?String(r.fecha).split(' ')[0]:'', r.marca||'',
-    r.monto||0, r.montoSys||0, r.propina||0, r.propinaSys||0,
-    r.total||0, r.totalSys||0, r.estado
-  ].join(';'))];
+  const lines=[hdr.join(';'),...errs.map(r=>[r.cod,r.fecha?String(r.fecha).split('T')[0]:'',r.marca||'',r.monto||0,r.montoSys||0,r.propina||0,r.propinaSys||0,r.total||0,r.totalSys||0,r.estado].join(';'))];
   const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
   const url=URL.createObjectURL(blob);
-  const a=document.createElement('a'); a.href=url; a.download=`concil_errores_${MESES[concilState.mes-1]}_${concilState.anio}.csv`; a.click();
+  const a=document.createElement('a');a.href=url;a.download=`concil_errores_${MESES[concilState.mes-1]}_${concilState.anio}.csv`;a.click();
 }
+
+
 
 // ============ EQUIPO ============
 let equipoBarberos=[], equipoServicios=[];
@@ -2518,7 +2520,7 @@ let arqueoSaldoInicial = 0;
 async function loadArqueo(){
   showOverlay();
   const [vRes, gRes, sRes] = await Promise.all([
-    sb.from('ventas').select('*').eq('forma_pago','EF').order('fecha').order('created_at').range(0,4999),
+    sb.rpc('get_ventas_ef'),
     sb.from('gastos').select('*').eq('forma_pago','EF').order('fecha').order('created_at').range(0,4999),
     sb.from('caja_saldo_inicial').select('*').eq('anio', arqueoFiltros.anio).eq('mes', arqueoFiltros.mes).maybeSingle(),
   ]);
