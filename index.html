@@ -250,15 +250,15 @@ async function loadDashboard(){
   await loadCatalogos();
   // Fetch all ventas & gastos
   // Usar RPC para obtener ventas sin límite de filas PostgREST
-  const {data:ventas} = await sb.rpc('get_ventas_anio', {p_anio: dshFilters.anio});
-  const {data:gastos} = await sb.from('gastos').select('*').limit(5000);
+  const {data:ventas} = await sb.rpc('get_ventas_anio', {p_anio: dshFilters.anio}).range(0, 4999);
+  const {data:gastos} = await sb.from('gastos').select('*').range(0,4999);
   hideOverlay();
 
   // Años disponibles — consultamos aparte para el selector
-  const {data:aniosData} = await sb.from('ventas').select('anio').limit(5000);
+  const {data:aniosData} = await sb.from('ventas').select('anio').range(0,4999);
   const anios=[...new Set((aniosData||[]).map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
 
-  console.log('v28mar-rpc — ventas:', (ventas||[]).length, 'mes:', dshFilters.mes, 'anio:', dshFilters.anio);
+  console.log('v28mar-range — ventas:', (ventas||[]).length, 'mes:', dshFilters.mes, 'anio:', dshFilters.anio);
 
   let vFilt = (ventas||[]);
   let gFilt = (gastos||[]).filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==dshFilters.anio);
@@ -911,7 +911,7 @@ let editingVentaId=null;
 async function loadHistorial(){
   showOverlay();
   await loadCatalogos();
-  const {data}=await sb.from('ventas').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false}).limit(5000);
+  const {data}=await sb.from('ventas').select('*').order('fecha',{ascending:false}).order('created_at',{ascending:false}).range(0,4999);
   hData=data||[];
   hideOverlay();
   renderHistorial();
@@ -1596,7 +1596,7 @@ let concilState = { mes: new Date().getMonth()+1, anio: new Date().getFullYear()
 async function loadConciliacion(){
   showOverlay();
   // Fetch only TK ventas
-  const {data:vtk} = await sb.from('ventas').select('*').eq('forma_pago','TK').order('fecha',{ascending:false}).limit(5000);
+  const {data:vtk} = await sb.from('ventas').select('*').eq('forma_pago','TK').order('fecha',{ascending:false}).range(0,4999);
   concilState.ventasTK = vtk||[];
   hideOverlay();
   renderConciliacion();
@@ -2517,8 +2517,8 @@ let arqueoSaldoInicial = 0;
 async function loadArqueo(){
   showOverlay();
   const [vRes, gRes, sRes] = await Promise.all([
-    sb.from('ventas').select('*').eq('forma_pago','EF').order('fecha').order('created_at').limit(5000),
-    sb.from('gastos').select('*').eq('forma_pago','EF').order('fecha').order('created_at').limit(5000),
+    sb.from('ventas').select('*').eq('forma_pago','EF').order('fecha').order('created_at').range(0,4999),
+    sb.from('gastos').select('*').eq('forma_pago','EF').order('fecha').order('created_at').range(0,4999),
     sb.from('caja_saldo_inicial').select('*').eq('anio', arqueoFiltros.anio).eq('mes', arqueoFiltros.mes).maybeSingle(),
   ]);
   arqueoSaldoInicial = sRes.data?.monto || 0;
