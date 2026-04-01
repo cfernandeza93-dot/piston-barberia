@@ -1893,6 +1893,10 @@ function runConciliacion(){
   const { getnetRows, mes, anio } = concilState;
   const vtkMes = concilState.ventasTK;
 
+  // Ventas sin código de autorización — no se pueden conciliar
+  const sinCodRows = vtkMes.filter(v=>!v.cod_autorizacion);
+  const sinCodTotal = sinCodRows.reduce((s,v)=>s+(v.total||0),0);
+
   const ventasByCod={};
   vtkMes.forEach(v=>{
     if(!v.cod_autorizacion) return;
@@ -1920,12 +1924,21 @@ function runConciliacion(){
     total:vs.reduce((s,v)=>s+(v.total||0),0),montoSys:null,propinaSys:null,totalSys:null,vsys:vs,
     fecha:vs[0].fecha,marca:'—'
   }));
-  const todosResultados=[...resultados,...sinGetNet];
+
+  // Ventas sin cod como fila especial en tabla
+  const sinCodEntradas = sinCodRows.map(v=>({
+    cod:'(sin código)',codN:'',estado:'SIN COD. AUTH',
+    monto:v.monto,propina:v.propina,total:v.total,montoSys:null,propinaSys:null,totalSys:null,
+    fecha:v.fecha,marca:'—',vsys:[v]
+  }));
+
+  const todosResultados=[...resultados,...sinGetNet,...sinCodEntradas];
   concilState.resultados=resultados;
   concilState.todosResultados=todosResultados;
 
   const totalGetNet=getnetRows.reduce((s,r)=>s+r.total,0);
-  const totalSistema=vtkMes.reduce((s,v)=>s+(v.total||0),0);
+  // Excluir ventas sin cod del total sistema para que la diferencia sea real
+  const totalSistema=vtkMes.filter(v=>v.cod_autorizacion).reduce((s,v)=>s+(v.total||0),0);
   const diffTotal=totalGetNet-totalSistema;
 
   const target=document.getElementById('concilResult');
@@ -1933,7 +1946,10 @@ function runConciliacion(){
   target.innerHTML=`
   <div class="grid-4" style="margin-bottom:16px">
     <div class="metric"><div class="metric-label">GetNet (${getnetRows.length} txn)</div><div class="metric-value">${fmtCLP(totalGetNet)}</div></div>
-    <div class="metric"><div class="metric-label">Sistema TK (${vtkMes.length} reg)</div><div class="metric-value">${fmtCLP(totalSistema)}</div></div>
+    <div class="metric"><div class="metric-label">Sistema TK (${vtkMes.length} reg)</div>
+      <div class="metric-value">${fmtCLP(totalSistema)}</div>
+      ${sinCodRows.length>0?`<div class="metric-sub" style="color:var(--red)">⚠ ${sinCodRows.length} sin cod. auth (${fmtCLP(sinCodTotal)})</div>`:''}
+    </div>
     <div class="metric"><div class="metric-label">Diferencia</div><div class="metric-value" style="color:${Math.abs(diffTotal)<100?'var(--green)':'var(--red)'}">${diffTotal>=0?'+':''}${fmtCLP(diffTotal)}</div></div>
     <div class="metric"><div class="metric-label">Resumen</div>
       <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
@@ -1941,6 +1957,7 @@ function runConciliacion(){
         <span class="badge badge-amber">⚠ Diferencia: ${diffs}</span>
         <span class="badge badge-red">✗ Sin sistema: ${missing}</span>
         ${sinGetNet.length?`<span class="badge badge-purple">↩ Sin GetNet: ${sinGetNet.length}</span>`:''}
+        ${sinCodRows.length?`<span class="badge badge-gray">? Sin cod. auth: ${sinCodRows.length}</span>`:''}
       </div>
     </div>
   </div>
@@ -1953,6 +1970,7 @@ function runConciliacion(){
           {k:'DIFERENCIA', label:`⚠ Diferencia (${diffs})`, bg:'#FEF3C7', color:'#B45309', border:'#FCD34D'},
           {k:'FALTANTE EN SISTEMA', label:`✗ Sin sistema (${missing})`, bg:'#FEE2E2', color:'#DC2626', border:'#FCA5A5'},
           {k:'EN SISTEMA SIN GETNET', label:`↩ Sin GetNet (${sinGetNet.length})`, bg:'#EDE9FE', color:'#6D28D9', border:'#C4B5FD'},
+          {k:'SIN COD. AUTH', label:`? Sin cod. (${sinCodRows.length})`, bg:'#F1F5F9', color:'#475569', border:'#CBD5E1'},
         ].map((f,i)=>`
           <button id="cfbtn-${f.k.replace(/ /g,'_')}"
             onclick="window._bridge.concilFiltrar('${f.k}')"
@@ -1975,6 +1993,7 @@ function runConciliacion(){
     {k:'DIFERENCIA', bg:'#FEF3C7', color:'#B45309', border:'#FCD34D'},
     {k:'FALTANTE EN SISTEMA', bg:'#FEE2E2', color:'#DC2626', border:'#FCA5A5'},
     {k:'EN SISTEMA SIN GETNET', bg:'#EDE9FE', color:'#6D28D9', border:'#C4B5FD'},
+    {k:'SIN COD. AUTH', bg:'#F1F5F9', color:'#475569', border:'#CBD5E1'},
   ];
   window._bridge.concilFiltrar = k => {
     // Actualizar estilos de botones
