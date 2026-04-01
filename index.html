@@ -2680,6 +2680,8 @@ function cancelImport(){importPreview=[];loadImportar();}
 // ============ ARQUEO DE CAJA ============
 let arqueoFiltros = { anio: new Date().getFullYear(), mes: new Date().getMonth()+1 };
 let arqueoSaldoInicial = 0;
+let arqueoSaldoFinalReal = null;
+let arqueoNotasFinal = '';
 
 async function loadArqueo(){
   showOverlay();
@@ -2689,6 +2691,8 @@ async function loadArqueo(){
     sb.from('caja_saldo_inicial').select('*').eq('anio', arqueoFiltros.anio).eq('mes', arqueoFiltros.mes).maybeSingle(),
   ]);
   arqueoSaldoInicial = sRes.data?.monto || 0;
+  arqueoSaldoFinalReal = sRes.data?.saldo_final_real ?? null;
+  arqueoNotasFinal = sRes.data?.notas_final || '';
   hideOverlay();
   renderArqueo(vRes.data||[], gRes.data||[]);
 }
@@ -2784,6 +2788,37 @@ function renderArqueo(ventas, gastos){
         <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:#64748B">Servicios</span><span>${fmtCLP(entradasSvc)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:#64748B">Productos</span><span>${fmtCLP(entradasProd)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:12px"><span style="color:#64748B">Propinas</span><span>${fmtCLP(propinasEF)}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Saldo final calculado vs real -->
+  <div class="grid-2" style="margin-bottom:16px">
+    <div class="section-card" style="border-left:4px solid var(--green)">
+      <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">Saldo Final Calculado</div>
+      <div style="font-size:26px;font-weight:700;color:${saldoFinal>=0?'var(--green)':'var(--red)'}">
+        ${fmtCLP(saldoFinal)}
+      </div>
+      <div style="font-size:11px;color:#94A3B8;margin-top:2px">Saldo inicial + entradas − salidas</div>
+    </div>
+    <div class="section-card" style="border-left:4px solid ${arqueoSaldoFinalReal!==null?(Math.abs(arqueoSaldoFinalReal-saldoFinal)<=500?'#10B981':'var(--red)'):'#CBD5E1'}">
+      <div style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">
+        Conteo Real de Caja
+        ${arqueoSaldoFinalReal!==null?`<span style="margin-left:8px;padding:2px 8px;border-radius:99px;font-size:10px;background:${Math.abs(arqueoSaldoFinalReal-saldoFinal)<=500?'#DCFCE7':'#FEE2E2'};color:${Math.abs(arqueoSaldoFinalReal-saldoFinal)<=500?'#15803D':'#DC2626'}">
+          ${Math.abs(arqueoSaldoFinalReal-saldoFinal)<=500?'✓ Cuadra':'⚠ Diferencia: '+fmtCLP(arqueoSaldoFinalReal-saldoFinal)}
+        </span>`:''}
+      </div>
+      ${arqueoSaldoFinalReal!==null
+        ?`<div style="font-size:26px;font-weight:700;color:${arqueoSaldoFinalReal>=0?'var(--green)':'var(--red)'}">${fmtCLP(arqueoSaldoFinalReal)}</div>
+          <div style="font-size:11px;color:#94A3B8;margin-top:2px">${arqueoNotasFinal||'Conteo físico registrado'}</div>`
+        :`<div style="font-size:13px;color:#94A3B8;margin:6px 0 10px">Sin conteo registrado aún</div>`}
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <input type="number" id="saldoFinalRealInput" value="${arqueoSaldoFinalReal??''}" placeholder="Ingresa el conteo físico"
+          style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:180px">
+        <input type="text" id="saldoFinalNotas" value="${arqueoNotasFinal}" placeholder="Notas (opcional)"
+          style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;width:160px">
+        <button class="btn btn-primary btn-sm" onclick="saveSaldoFinal()">Guardar conteo</button>
+        ${arqueoSaldoFinalReal!==null?`<button class="btn btn-ghost btn-sm" onclick="propagarSiguienteMes(${arqueoSaldoFinalReal})" title="Usar este saldo como inicial del mes siguiente">→ Usar como saldo inicial de ${MESES[arqueoFiltros.mes%12]} ${arqueoFiltros.mes==12?arqueoFiltros.anio+1:arqueoFiltros.anio}</button>`:''}
       </div>
     </div>
   </div>
@@ -2911,7 +2946,40 @@ function renderArqueo(ventas, gastos){
   };
 }
 
-async function saveSaldoInicial(){
+async function saveSaldoFinal(){
+  const val = document.getElementById('saldoFinalRealInput')?.value;
+  if(val===''||val===null||val===undefined){ toast('Ingresa el conteo físico','error'); return; }
+  const monto = Number(val);
+  const notas = document.getElementById('saldoFinalNotas')?.value||null;
+  showOverlay();
+  const {error} = await sb.from('caja_saldo_inicial')
+    .upsert({anio:arqueoFiltros.anio, mes:arqueoFiltros.mes, monto:arqueoSaldoInicial,
+             saldo_final_real:monto, notas_final:notas, updated_at:new Date().toISOString()},
+            {onConflict:'anio,mes'});
+  hideOverlay();
+  if(error){ toast('Error: '+error.message,'error'); return; }
+  arqueoSaldoFinalReal = monto;
+  arqueoNotasFinal = notas||'';
+  toast(`✓ Conteo de ${MESES[arqueoFiltros.mes-1]} guardado: ${fmtCLP(monto)}`);
+  loadArqueo();
+}
+
+async function propagarSiguienteMes(saldoFinal){
+  const sigMes  = arqueoFiltros.mes===12 ? 1 : arqueoFiltros.mes+1;
+  const sigAnio = arqueoFiltros.mes===12 ? arqueoFiltros.anio+1 : arqueoFiltros.anio;
+  if(!confirm(`¿Usar ${fmtCLP(saldoFinal)} como saldo inicial de ${MESES[sigMes-1]} ${sigAnio}?`)) return;
+  showOverlay();
+  const {error} = await sb.from('caja_saldo_inicial')
+    .upsert({anio:sigAnio, mes:sigMes, monto:saldoFinal, updated_at:new Date().toISOString()},
+            {onConflict:'anio,mes'});
+  hideOverlay();
+  if(error){ toast('Error: '+error.message,'error'); return; }
+  toast(`✓ Saldo inicial de ${MESES[sigMes-1]} ${sigAnio} establecido en ${fmtCLP(saldoFinal)}`);
+  // Navegar al mes siguiente
+  arqueoFiltros.mes = sigMes;
+  arqueoFiltros.anio = sigAnio;
+  loadArqueo();
+}
   const monto = Number(document.getElementById('saldoInicialInput')?.value||0);
   const notas = document.getElementById('saldoInicialNotas')?.value||null;
   showOverlay();
@@ -3688,6 +3756,8 @@ window._bridge.loadArqueo=loadArqueo;
 window._bridge.loadAnalisis=loadAnalisis;
 window._bridge.arqueoExportCSV=arqueoExportCSV;
 window._bridge.saveSaldoInicial=saveSaldoInicial;
+window._bridge.saveSaldoFinal=saveSaldoFinal;
+window._bridge.propagarSiguienteMes=propagarSiguienteMes;
 window._bridge.gastoSetTab=v=>{gastoTabActiva=v;renderGastos();};
 window._bridge.gastoSetAnio=v=>{gastoFiltros.anio=Number(v);renderGastos();};
 window._bridge.gastoSetMes=v=>{gastoFiltros.mes=Number(v);renderGastos();};
