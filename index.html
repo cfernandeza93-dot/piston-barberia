@@ -171,7 +171,7 @@ window._bridge = {};
  'ventaFechaChange','ventaTipoChange','ventaFormaPagoChange','ventaServicioChange','ventaEsWebChange',
  'processImportFile','confirmImport','cancelImport',
  'concilSetAnio','concilSetMes','runConciliacion',
- 'arqueoExportCSV','saveSaldoInicial','gastoSetTab','gastoSetAnio','gastoSetMes',
+ 'arqueoExportCSV','saveSaldoInicial','saveSaldoFinal','propagarSiguienteMes','gastoSetTab','gastoSetAnio','gastoSetMes',
  'gcPreview','gcSave','gcDescargarPNG','gcDescargarPDF','gcCanjear','gcDeleteCard'
 ].forEach(fn=>{
   window[fn]=function(){return window._bridge[fn]&&window._bridge[fn](...arguments)};
@@ -2952,10 +2952,24 @@ async function saveSaldoFinal(){
   const monto = Number(val);
   const notas = document.getElementById('saldoFinalNotas')?.value||null;
   showOverlay();
-  const {error} = await sb.from('caja_saldo_inicial')
-    .upsert({anio:arqueoFiltros.anio, mes:arqueoFiltros.mes, monto:arqueoSaldoInicial,
-             saldo_final_real:monto, notas_final:notas, updated_at:new Date().toISOString()},
-            {onConflict:'anio,mes'});
+
+  // Verificar si ya existe el registro del mes
+  const {data:existing} = await sb.from('caja_saldo_inicial')
+    .select('id').eq('anio',arqueoFiltros.anio).eq('mes',arqueoFiltros.mes).maybeSingle();
+
+  let error;
+  if(existing){
+    // Actualizar solo los campos del saldo final, sin tocar el saldo inicial
+    ({error} = await sb.from('caja_saldo_inicial')
+      .update({saldo_final_real:monto, notas_final:notas, updated_at:new Date().toISOString()})
+      .eq('id', existing.id));
+  } else {
+    // Insertar fila nueva
+    ({error} = await sb.from('caja_saldo_inicial')
+      .insert({anio:arqueoFiltros.anio, mes:arqueoFiltros.mes, monto:0,
+               saldo_final_real:monto, notas_final:notas, updated_at:new Date().toISOString()}));
+  }
+
   hideOverlay();
   if(error){ toast('Error: '+error.message,'error'); return; }
   arqueoSaldoFinalReal = monto;
