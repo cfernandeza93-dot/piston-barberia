@@ -134,7 +134,7 @@ tr:hover td{background:#F8FAFC}
   <div class="topbar">
     <div>
       <div class="topbar-title">✂ PÍSTON BARBERÍA</div>
-      <div class="topbar-subtitle">Sistema de Gestión · v1abr</div>
+      <div class="topbar-subtitle">Sistema de Gestión · v1abr-b</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <span id="topbarDate" style="font-size:11px;color:#94A3B8"></span>
@@ -2947,7 +2947,9 @@ function renderArqueo(ventas, gastos){
 }
 
 async function saveSaldoFinal(){
+  console.log('saveSaldoFinal called');
   const val = document.getElementById('saldoFinalRealInput')?.value;
+  console.log('val:', val);
   if(val===''||val===null||val===undefined){ toast('Ingresa el conteo físico','error'); return; }
   const monto = Number(val);
   const notas = document.getElementById('saldoFinalNotas')?.value||null;
