@@ -2980,6 +2980,8 @@ async function propagarSiguienteMes(saldoFinal){
   arqueoFiltros.anio = sigAnio;
   loadArqueo();
 }
+
+async function saveSaldoInicial(){
   const monto = Number(document.getElementById('saldoInicialInput')?.value||0);
   const notas = document.getElementById('saldoInicialNotas')?.value||null;
   showOverlay();
