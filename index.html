@@ -260,7 +260,7 @@ async function loadDashboard(){
   const {data:aniosData} = await sb.from('ventas').select('anio').range(0,4999);
   const anios=[...new Set((aniosData||[]).map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
 
-  console.log('v28mar-json — ventas:', (ventas||[]).length, 'mes:', dshFilters.mes);
+  
 
   let vFilt = (ventas||[]);
   let gFilt = (gastos||[]).filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==dshFilters.anio);
@@ -2947,9 +2947,7 @@ function renderArqueo(ventas, gastos){
 }
 
 async function saveSaldoFinal(){
-  console.log('saveSaldoFinal called');
   const val = document.getElementById('saldoFinalRealInput')?.value;
-  console.log('val:', val);
   if(val===''||val===null||val===undefined){ toast('Ingresa el conteo físico','error'); return; }
   const monto = Number(val);
   const notas = document.getElementById('saldoFinalNotas')?.value||null;
