@@ -4157,6 +4157,65 @@ async function generarPDFBarbero(nombre, row) {
   doc.text(fCLP(row.totalSant + row.transferFall), PW-M-4, y+7, {align:'right'});
   y += 16;
 
+  // ─── ADELANTOS (justo bajo la liquidación) ────────────────────────────────
+  // Prepare data early (needed here and later)
+  const aSant = liqAdelantosSantander.filter(a=>a.barbero_nombre===nombre && a.mes===liqFiltros.mes);
+  const aMesGastos = liqGastos.filter(g=>
+    g.barbero_nombre===nombre &&
+    g.fecha && Number(g.fecha.split('-')[0])===liqFiltros.anio &&
+    Number(g.fecha.split('-')[1])===liqFiltros.mes
+  );
+
+  // Adelantos Santander
+  if(y > PH - 70) { doc.addPage(); y = M + 5; }
+  doc.setFillColor(...CLR_RED).rect(M, y, PW-M*2, 6, 'F');
+  doc.setFontSize(9).setFont(undefined,'bold').setTextColor(255,255,255);
+  doc.text('Adelantos Santander (Transferencias TRF previas)', M+3, y+4.2);
+  y += 8;
+  if(aSant.length>0){
+    doc.autoTable({
+      startY: y,
+      head:[['Fecha','Descripcion','Monto']],
+      body: aSant.map(a=>[a.fecha||'—', a.descripcion||'Adelanto', fCLP(a.monto)]),
+      foot:[[{content:'Total adelantos Santander', colSpan:2, styles:{fontStyle:'bold'}},
+             fCLP(aSant.reduce((s,a)=>s+a.monto,0))]],
+      theme:'grid',
+      headStyles:{fillColor:CLR_RED, textColor:[255,255,255], fontSize:8},
+      bodyStyles:{fontSize:9},
+      footStyles:{fillColor:CLR_RED, textColor:[255,255,255], fontStyle:'bold'},
+      columnStyles:{0:{cellWidth:30},1:{cellWidth:110},2:{cellWidth:'auto',halign:'right'}},
+      margin:{left:M, right:M},
+    });
+    y = doc.lastAutoTable.finalY + 7;
+  } else {
+    doc.setFontSize(9).setTextColor(...CLR_DKGRAY).text('Sin adelantos Santander registrados.', M, y); y += 8;
+  }
+
+  // Adelantos Falabella
+  if(y > PH - 70) { doc.addPage(); y = M + 5; }
+  doc.setFillColor(...CLR_GREEN).rect(M, y, PW-M*2, 6, 'F');
+  doc.setFontSize(9).setFont(undefined,'bold').setTextColor(255,255,255);
+  doc.text('Adelantos Falabella (Efectivo EF)', M+3, y+4.2);
+  y += 8;
+  if(aMesGastos.length>0){
+    doc.autoTable({
+      startY: y,
+      head:[['Fecha','Descripcion','Monto']],
+      body: aMesGastos.map(g=>[g.fecha||'—', g.descripcion||g.detalle||'Adelanto', fCLP(g.monto)]),
+      foot:[[{content:'Total adelantos Falabella', colSpan:2, styles:{fontStyle:'bold'}},
+             fCLP(aMesGastos.reduce((s,g)=>s+g.monto,0))]],
+      theme:'grid',
+      headStyles:{fillColor:CLR_GREEN, textColor:[255,255,255], fontSize:8},
+      bodyStyles:{fontSize:9},
+      footStyles:{fillColor:CLR_GREEN, textColor:[255,255,255], fontStyle:'bold'},
+      columnStyles:{0:{cellWidth:30},1:{cellWidth:110},2:{cellWidth:'auto',halign:'right'}},
+      margin:{left:M, right:M},
+    });
+    y = doc.lastAutoTable.finalY + 7;
+  } else {
+    doc.setFontSize(9).setTextColor(...CLR_DKGRAY).text('Sin adelantos EF registrados.', M, y); y += 8;
+  }
+
   // ─── SECCIÓN 2: COMPARACIÓN MENSUAL ───────────────────────────────────────
   doc.addPage();
   y = M;
@@ -4296,69 +4355,6 @@ async function generarPDFBarbero(nombre, row) {
     y = doc.lastAutoTable.finalY + 7;
   } else {
     doc.setFontSize(9).setTextColor(...CLR_DKGRAY).text('Sin servicios EF en este período.', M, y); y += 8;
-  }
-
-  // Check page
-  if(y > PH - 70) { doc.addPage(); y = M + 5; }
-
-  // C) Adelantos Santander
-  const aSant = liqAdelantosSantander.filter(a=>a.barbero_nombre===nombre && a.mes===liqFiltros.mes);
-  doc.setFillColor(220,38,38,0.15).setDrawColor(...CLR_RED).setLineWidth(0.3);
-  doc.rect(M, y, PW-M*2, 6, 'F');
-  doc.setFontSize(9).setFont(undefined,'bold').setTextColor(...CLR_RED);
-  doc.text('Adelantos Santander (Transferencias TRF previas)', M+3, y+4.2);
-  y += 8;
-
-  if(aSant.length>0){
-    doc.autoTable({
-      startY: y,
-      head:[['Fecha','Descripción','Monto']],
-      body: aSant.map(a=>[a.fecha||'—', a.descripcion||'Adelanto', fCLP(a.monto)]),
-      foot:[[{content:'Total adelantos Santander', colSpan:2, styles:{fontStyle:'bold'}},
-             fCLP(aSant.reduce((s,a)=>s+a.monto,0))]],
-      theme:'grid',
-      headStyles:{fillColor:CLR_RED, textColor:[255,255,255], fontSize:8},
-      bodyStyles:{fontSize:9},
-      footStyles:{fillColor:CLR_RED, textColor:[255,255,255], fontStyle:'bold'},
-      columnStyles:{0:{cellWidth:30},1:{cellWidth:110},2:{cellWidth:'auto',halign:'right'}},
-      margin:{left:M, right:M},
-    });
-    y = doc.lastAutoTable.finalY + 7;
-  } else {
-    doc.setFontSize(9).setTextColor(...CLR_DKGRAY).text('Sin adelantos Santander registrados.', M, y); y += 8;
-  }
-
-  // Check page
-  if(y > PH - 70) { doc.addPage(); y = M + 5; }
-
-  // D) Adelantos Falabella (EF)
-  const aMesGastos = liqGastos.filter(g=>
-    g.barbero_nombre===nombre &&
-    g.fecha && Number(g.fecha.split('-')[0])===liqFiltros.anio &&
-    Number(g.fecha.split('-')[1])===liqFiltros.mes
-  );
-  doc.setFillColor(220,252,231,100).rect(M, y, PW-M*2, 6, 'F');
-  doc.setFontSize(9).setFont(undefined,'bold').setTextColor(...CLR_GREEN);
-  doc.text('Adelantos Falabella (Efectivo EF)', M+3, y+4.2);
-  y += 8;
-
-  if(aMesGastos.length>0){
-    doc.autoTable({
-      startY: y,
-      head:[['Fecha','Descripción','Monto']],
-      body: aMesGastos.map(g=>[g.fecha||'—', g.descripcion||g.detalle||'Adelanto', fCLP(g.monto)]),
-      foot:[[{content:'Total adelantos Falabella', colSpan:2, styles:{fontStyle:'bold'}},
-             fCLP(aMesGastos.reduce((s,g)=>s+g.monto,0))]],
-      theme:'grid',
-      headStyles:{fillColor:CLR_GREEN, textColor:[255,255,255], fontSize:8},
-      bodyStyles:{fontSize:9},
-      footStyles:{fillColor:CLR_GREEN, textColor:[255,255,255], fontStyle:'bold'},
-      columnStyles:{0:{cellWidth:30},1:{cellWidth:110},2:{cellWidth:'auto',halign:'right'}},
-      margin:{left:M, right:M},
-    });
-    y = doc.lastAutoTable.finalY + 7;
-  } else {
-    doc.setFontSize(9).setTextColor(...CLR_DKGRAY).text('Sin adelantos EF registrados.', M, y); y += 8;
   }
 
   // ─── FIRMA ─────────────────────────────────────────────────────────────────
