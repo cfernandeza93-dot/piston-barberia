@@ -151,6 +151,7 @@ tr:hover td{background:#F8FAFC}
     <button class="tab-btn" onclick="go('arqueo')">🏦 Arqueo Caja</button>
     <!-- <button class="tab-btn" onclick="go('giftcards')">🎁 Gift Cards</button> -->
     <button class="tab-btn" onclick="go('analisis')">📈 Análisis</button>
+    <button class="tab-btn" onclick="go('liquidacion')">💰 Liquidación</button>
     <button class="tab-btn" onclick="go('importar')">📥 Importar</button>
   </div>
   <div class="content" id="mainContent"></div>
@@ -159,7 +160,7 @@ tr:hover td{background:#F8FAFC}
 <!-- BRIDGE -->
 <script>
 window._bridge = {};
-['checkPw','go','dshTab','loadDashboard','loadVenta','loadHistorial','loadInventario','loadGastos','loadConciliacion','loadEquipo','loadImportar','loadArqueo','loadAnalisis','loadGiftCards',
+['checkPw','go','dshTab','loadDashboard','loadVenta','loadHistorial','loadInventario','loadGastos','loadConciliacion','loadEquipo','loadImportar','loadArqueo','loadAnalisis','loadLiquidacion','loadGiftCards',
  'submitVenta','addCartItem','removeCartItem','clearCart',
  'filtrarProductos','seleccionarProducto','limpiarSeleccionProducto',
  'filterHistorial','deleteVenta','startEditVenta','saveEditVenta','cancelEditVenta','exportHistorialCSV',
@@ -235,10 +236,10 @@ function checkPw(){
 function go(tab){
   currentTab=tab;
   document.querySelectorAll('.tab-btn').forEach((b,i)=>{
-    const tabs=['dashboard','venta','historial','inventario','gastos','conciliacion','equipo','arqueo','analisis','importar'];
+    const tabs=['dashboard','venta','historial','inventario','gastos','conciliacion','equipo','arqueo','analisis','liquidacion','importar'];
     b.classList.toggle('active',tabs[i]===tab);
   });
-  const fns={dashboard:loadDashboard,venta:loadVenta,historial:loadHistorial,inventario:loadInventario,gastos:loadGastos,conciliacion:loadConciliacion,equipo:loadEquipo,arqueo:loadArqueo,analisis:loadAnalisis,importar:loadImportar};
+  const fns={dashboard:loadDashboard,venta:loadVenta,historial:loadHistorial,inventario:loadInventario,gastos:loadGastos,conciliacion:loadConciliacion,equipo:loadEquipo,arqueo:loadArqueo,analisis:loadAnalisis,liquidacion:loadLiquidacion,importar:loadImportar};
   fns[tab]&&fns[tab]();
 }
 
@@ -3730,6 +3731,323 @@ function renderAnalisis(ventasAll){
   window._bridge.analisisSetMes  = v=>{ analisisFiltros.mes=Number(v);  loadAnalisis(); };
 }
 
+// ============ LIQUIDACIÓN DE PAGOS ============
+const PW_LIQ = 'Pi$t0n2590';
+let liqUnlocked = false;
+let liqFiltros = { anio: new Date().getFullYear(), mes: new Date().getMonth()+1 };
+let liqVentas = [], liqGastos = [], liqAdelantosSantander = [];
+
+async function loadLiquidacion(){
+  if(!liqUnlocked){
+    renderLiquidacionLock();
+    return;
+  }
+  showOverlay();
+  await loadCatalogos();
+  const [vRes, gRes, aRes] = await Promise.all([
+    sb.rpc('get_ventas_anio_json', {p_anio: liqFiltros.anio}),
+    sb.from('gastos').select('*').eq('categoria','Adelantos').range(0,4999),
+    sb.from('adelantos_santander').select('*').eq('anio', liqFiltros.anio).order('mes').order('barbero_nombre'),
+  ]);
+  liqVentas = vRes.data||[];
+  liqGastos = gRes.data||[];
+  liqAdelantosSantander = aRes.data||[];
+  hideOverlay();
+  renderLiquidacion();
+}
+
+function renderLiquidacionLock(){
+  document.getElementById('mainContent').innerHTML=`
+  <div style="display:flex;align-items:center;justify-content:center;height:60vh">
+    <div class="card" style="max-width:380px;width:100%;text-align:center;padding:40px 32px">
+      <div style="font-size:36px;margin-bottom:12px">🔐</div>
+      <div style="font-size:18px;font-weight:700;margin-bottom:6px">Liquidación de Pagos</div>
+      <div style="font-size:13px;color:#64748B;margin-bottom:24px">Módulo restringido — ingresa la contraseña para continuar</div>
+      <input type="password" id="liqPwInput" placeholder="Contraseña"
+        onkeydown="if(event.key==='Enter')window._bridge.liqCheckPw()"
+        style="width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:12px;box-sizing:border-box">
+      <button onclick="window._bridge.liqCheckPw()"
+        style="width:100%;padding:10px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">
+        Ingresar
+      </button>
+      <div id="liqPwError" style="color:var(--red);font-size:12px;margin-top:10px;display:none">Contraseña incorrecta</div>
+    </div>
+  </div>`;
+  window._bridge.liqCheckPw = ()=>{
+    const v = document.getElementById('liqPwInput')?.value;
+    if(v === PW_LIQ){ liqUnlocked=true; loadLiquidacion(); }
+    else { document.getElementById('liqPwError').style.display='block'; }
+  };
+}
+
+function renderLiquidacion(){
+  const vMes = liqVentas.filter(v=>v.n_mes==liqFiltros.mes);
+  const gMes = liqGastos.filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==liqFiltros.anio&&Number(g.fecha.split('-')[1])==liqFiltros.mes);
+  const aMes = liqAdelantosSantander.filter(a=>a.mes==liqFiltros.mes);
+
+  // Barberos activos en el mes (sin PISTON)
+  const barbNombres = [...new Set(vMes.map(v=>v.barbero_nombre).filter(n=>n&&!n.toUpperCase().includes('PISTON')))].sort();
+
+  const anios = [...new Set(liqVentas.map(v=>v.anio).filter(Boolean))].sort((a,b)=>b-a);
+  const anioOpts = anios.map(a=>`<option value="${a}" ${liqFiltros.anio==a?'selected':''}>${a}</option>`).join('');
+  const mesOpts  = MESES.map((m,i)=>`<option value="${i+1}" ${liqFiltros.mes==i+1?'selected':''}>${m}</option>`).join('');
+
+  // Calcular por barbero
+  const rows = barbNombres.map(nombre=>{
+    const svc=servicios.find(s=>s.nombre);
+    const pct = (barberos.find(b=>b.nombre===nombre)?.comision||50)/100;
+
+    const vBarb = vMes.filter(v=>v.barbero_nombre===nombre);
+
+    // SANTANDER (TK + TRF)
+    const vSant = vBarb.filter(v=>v.tipo==='servicio'&&['TK','TRF'].includes(v.forma_pago));
+    const montoSant  = vSant.reduce((s,v)=>s+(v.monto||0),0);
+    const comSant    = Math.round(vSant.reduce((s,v)=>{
+      const svcPct=(servicios.find(sx=>sx.nombre===v.servicio_producto)?.comision||50)/100;
+      return s+(v.monto||0)*svcPct;
+    },0));
+    const propSant   = vSant.reduce((s,v)=>s+(v.propina||0),0);
+    const adelSant   = aMes.filter(a=>a.barbero_nombre===nombre).reduce((s,a)=>s+a.monto,0);
+    const totalSant  = comSant + propSant - adelSant;
+
+    // FALABELLA (EF)
+    const vFall = vBarb.filter(v=>v.tipo==='servicio'&&v.forma_pago==='EF');
+    const montoFall  = vFall.reduce((s,v)=>s+(v.monto||0),0);
+    const comFall    = Math.round(vFall.reduce((s,v)=>{
+      const svcPct=(servicios.find(sx=>sx.nombre===v.servicio_producto)?.comision||50)/100;
+      return s+(v.monto||0)*svcPct;
+    },0));
+    const propFall   = vFall.reduce((s,v)=>s+(v.propina||0),0);
+    // Comisión productos (10%) — todos los pagos
+    const comProd    = Math.round(vBarb.filter(v=>v.tipo==='PRODUCTO').reduce((s,v)=>s+(v.monto||0)*0.1,0));
+    const totalFall  = comFall + propFall + comProd;
+    // Adelantos EF desde gastos
+    const adelFall   = gMes.filter(g=>g.barbero_nombre===nombre).reduce((s,g)=>s+g.monto,0);
+    const transferFall = totalFall - adelFall;
+
+    const totalBarbero = totalSant + totalFall;
+
+    return { nombre, pct,
+      montoSant, comSant, propSant, adelSant, totalSant,
+      montoFall, comFall, propFall, comProd, totalFall, adelFall, transferFall,
+      totalBarbero };
+  });
+
+  // Totales columna
+  const T = rows.reduce((acc,r)=>({
+    montoSant:acc.montoSant+r.montoSant, comSant:acc.comSant+r.comSant,
+    propSant:acc.propSant+r.propSant, adelSant:acc.adelSant+r.adelSant, totalSant:acc.totalSant+r.totalSant,
+    montoFall:acc.montoFall+r.montoFall, comFall:acc.comFall+r.comFall,
+    propFall:acc.propFall+r.propFall, comProd:acc.comProd+r.comProd, totalFall:acc.totalFall+r.totalFall,
+    adelFall:acc.adelFall+r.adelFall, transferFall:acc.transferFall+r.transferFall,
+    totalBarbero:acc.totalBarbero+r.totalBarbero
+  }), {montoSant:0,comSant:0,propSant:0,adelSant:0,totalSant:0,montoFall:0,comFall:0,propFall:0,comProd:0,totalFall:0,adelFall:0,transferFall:0,totalBarbero:0});
+
+  const thStyle = 'padding:7px 10px;font-size:11px;font-weight:700;white-space:nowrap;text-align:right';
+  const tdStyle = 'padding:6px 10px;font-size:12px;text-align:right;white-space:nowrap';
+  const headerBg1='background:#DC2626;color:#fff';
+  const headerBg2='background:#16A34A;color:#fff';
+  const headerBgT='background:#1E3A5F;color:#fff';
+
+  document.getElementById('mainContent').innerHTML=`
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap">
+    <span class="sec-title" style="margin:0">💰 Liquidación de Pagos</span>
+    <select onchange="window._bridge.liqSetAnio(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">${anioOpts}</select>
+    <select onchange="window._bridge.liqSetMes(this.value)" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px">${mesOpts}</select>
+    <span style="font-size:12px;color:#64748B">${MESES[liqFiltros.mes-1]} ${liqFiltros.anio}</span>
+    <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="window._bridge.liqAddAdelanto()">+ Adelanto Santander</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportLiqCSV()">⬇ Exportar CSV</button>
+    <button class="btn btn-danger btn-sm" onclick="liqUnlocked=false;go('dashboard')">🔒 Cerrar</button>
+  </div>
+
+  <!-- Adelantos Santander del mes -->
+  ${aMes.length>0?`
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-title">Adelantos Santander — ${MESES[liqFiltros.mes-1]} ${liqFiltros.anio}</div>
+    <table>
+      <thead><tr><th>Barbero</th><th>Monto</th><th>Descripción</th><th>Fecha</th><th></th></tr></thead>
+      <tbody>
+        ${aMes.map(a=>`<tr>
+          <td>${a.barbero_nombre}</td>
+          <td style="text-align:right;font-weight:600;color:var(--red)">${fmtCLP(a.monto)}</td>
+          <td style="color:#64748B">${a.descripcion||'—'}</td>
+          <td>${a.fecha||'—'}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="window._bridge.liqDeleteAdelanto('${a.id}')">🗑</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`:''}
+
+  <!-- Tabla principal -->
+  <div style="overflow-x:auto">
+  <table style="border-collapse:collapse;width:100%;font-size:12px">
+    <thead>
+      <tr>
+        <th rowspan="2" style="${thStyle};text-align:left;background:#F1F5F9;min-width:110px">Mes</th>
+        <th rowspan="2" style="${thStyle};text-align:left;background:#F1F5F9;min-width:130px">Barbero</th>
+        <!-- Santander -->
+        <th colspan="5" style="${thStyle};text-align:center;${headerBg1};border:1px solid #B91C1C">🏦 Banco Santander</th>
+        <th style="${thStyle};${headerBg1};border:1px solid #B91C1C">Transferencia<br>Adelanto</th>
+        <!-- Falabella -->
+        <th colspan="4" style="${thStyle};text-align:center;${headerBg2};border:1px solid #15803D">🏦 Banco Falabella</th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D">Adelanto<br>EF</th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D">Total a Transf.<br>Falabella</th>
+        <!-- Total -->
+        <th colspan="2" style="${thStyle};text-align:center;${headerBgT}">TOTAL</th>
+      </tr>
+      <tr>
+        <th style="${thStyle};${headerBg1};border:1px solid #B91C1C">Con Boleta</th>
+        <th style="${thStyle};${headerBg1};border:1px solid #B91C1C">Comisión<br>Barbero</th>
+        <th style="${thStyle};${headerBg1};border:1px solid #B91C1C">Propina</th>
+        <th style="${thStyle};${headerBg1};border:1px solid #B91C1C">Subtotal</th>
+        <th style="${thStyle};${headerBg1};border:1px solid #B91C1C">Total a Transf.<br>Santander</th>
+        <th style="${thStyle};${headerBg1};border:1px solid #B91C1C"></th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D">Sin Boleta</th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D">Comisión<br>Barbero</th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D">Propina</th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D">Com.<br>Productos</th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D"></th>
+        <th style="${thStyle};${headerBg2};border:1px solid #15803D"></th>
+        <th style="${thStyle};${headerBgT}">Barbero</th>
+        <th style="${thStyle};${headerBgT}">Com. Prod.</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(r=>`
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="${tdStyle};text-align:left;color:#64748B">${MESES[liqFiltros.mes-1]}</td>
+        <td style="${tdStyle};text-align:left;font-weight:700">${r.nombre.split(' ')[0]} ${r.nombre.split(' ')[1]||''}</td>
+        <!-- Santander -->
+        <td style="${tdStyle};background:#FEF2F2">${fmtCLP(r.montoSant)}</td>
+        <td style="${tdStyle};background:#FEF2F2">${fmtCLP(r.comSant)}</td>
+        <td style="${tdStyle};background:#FEF2F2">${r.propSant?fmtCLP(r.propSant):'—'}</td>
+        <td style="${tdStyle};background:#FEF2F2;font-weight:700">${fmtCLP(r.comSant+r.propSant)}</td>
+        <td style="${tdStyle};background:#FEE2E2;font-weight:700;color:#DC2626">${fmtCLP(r.totalSant)}</td>
+        <td style="${tdStyle};background:#FEE2E2;color:#DC2626">${r.adelSant?fmtCLP(r.adelSant):'—'}</td>
+        <!-- Falabella -->
+        <td style="${tdStyle};background:#F0FDF4">${fmtCLP(r.montoFall)}</td>
+        <td style="${tdStyle};background:#F0FDF4">${fmtCLP(r.comFall)}</td>
+        <td style="${tdStyle};background:#F0FDF4">${r.propFall?fmtCLP(r.propFall):'—'}</td>
+        <td style="${tdStyle};background:#F0FDF4">${r.comProd?fmtCLP(r.comProd):'—'}</td>
+        <td style="${tdStyle};background:#DCFCE7;color:var(--red)">${r.adelFall?fmtCLP(r.adelFall):'—'}</td>
+        <td style="${tdStyle};background:#DCFCE7;font-weight:700;color:#15803D">${fmtCLP(r.transferFall)}</td>
+        <!-- Total -->
+        <td style="${tdStyle};background:#EFF6FF;font-weight:700;font-size:13px">${fmtCLP(r.totalSant+r.transferFall)}</td>
+        <td style="${tdStyle};background:#EFF6FF;color:#64748B">${r.comProd?fmtCLP(r.comProd):'—'}</td>
+      </tr>`).join('')}
+    </tbody>
+    <tfoot>
+      <tr style="background:#F1F5F9;font-weight:700;border-top:2px solid #CBD5E1">
+        <td colspan="2" style="${tdStyle};text-align:left">TOTAL ${MESES[liqFiltros.mes-1].toUpperCase()}</td>
+        <td style="${tdStyle};background:#FEF2F2">${fmtCLP(T.montoSant)}</td>
+        <td style="${tdStyle};background:#FEF2F2">${fmtCLP(T.comSant)}</td>
+        <td style="${tdStyle};background:#FEF2F2">${fmtCLP(T.propSant)}</td>
+        <td style="${tdStyle};background:#FEF2F2">${fmtCLP(T.comSant+T.propSant)}</td>
+        <td style="${tdStyle};background:#FEE2E2;color:#DC2626">${fmtCLP(T.totalSant)}</td>
+        <td style="${tdStyle};background:#FEE2E2;color:#DC2626">${fmtCLP(T.adelSant)}</td>
+        <td style="${tdStyle};background:#F0FDF4">${fmtCLP(T.montoFall)}</td>
+        <td style="${tdStyle};background:#F0FDF4">${fmtCLP(T.comFall)}</td>
+        <td style="${tdStyle};background:#F0FDF4">${fmtCLP(T.propFall)}</td>
+        <td style="${tdStyle};background:#F0FDF4">${fmtCLP(T.comProd)}</td>
+        <td style="${tdStyle};background:#DCFCE7;color:var(--red)">${fmtCLP(T.adelFall)}</td>
+        <td style="${tdStyle};background:#DCFCE7;color:#15803D">${fmtCLP(T.transferFall)}</td>
+        <td style="${tdStyle};background:#EFF6FF;font-size:13px">${fmtCLP(T.totalSant+T.transferFall)}</td>
+        <td style="${tdStyle};background:#EFF6FF;color:#64748B">${fmtCLP(T.comProd)}</td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+
+  <div style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#64748B">
+    <span>🔴 <strong>Santander:</strong> Servicios TK + TRF · comisión + propinas − adelantos TRF</span>
+    <span>🟢 <strong>Falabella:</strong> Servicios EF · comisión + propinas + 10% productos − adelantos EF</span>
+  </div>`;
+
+  window._bridge.liqSetAnio = v=>{ liqFiltros.anio=Number(v); loadLiquidacion(); };
+  window._bridge.liqSetMes  = v=>{ liqFiltros.mes=Number(v);  loadLiquidacion(); };
+  window._bridge.liqDeleteAdelanto = async id=>{
+    if(!confirm('¿Eliminar este adelanto?')) return;
+    showOverlay();
+    await sb.from('adelantos_santander').delete().eq('id',id);
+    hideOverlay();
+    toast('✓ Adelanto eliminado');
+    loadLiquidacion();
+  };
+  window._bridge.liqAddAdelanto = ()=>{
+    const bOpts = barberos.filter(b=>!b.nombre.toUpperCase().includes('PISTON'))
+      .map(b=>`<option value="${b.nombre}">${b.nombre}</option>`).join('');
+    // Mostrar modal inline
+    const existing = document.querySelector('#liqAddModal');
+    if(existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id='liqAddModal';
+    modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9998;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML=`
+      <div class="card" style="width:380px;padding:24px">
+        <div style="font-weight:700;font-size:15px;margin-bottom:16px">+ Adelanto Santander</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <select id="liqAbarbero" style="padding:8px;border:1px solid var(--border);border-radius:6px">
+            <option value="">Selecciona barbero</option>${bOpts}
+          </select>
+          <input type="number" id="liqAmonto" placeholder="Monto" style="padding:8px;border:1px solid var(--border);border-radius:6px">
+          <input type="date" id="liqAfecha" style="padding:8px;border:1px solid var(--border);border-radius:6px">
+          <input type="text" id="liqAdesc" placeholder="Descripción (opcional)" style="padding:8px;border:1px solid var(--border);border-radius:6px">
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button onclick="window._bridge.liqSaveAdelanto()" class="btn btn-primary" style="flex:1">Guardar</button>
+            <button onclick="document.getElementById('liqAddModal').remove()" class="btn btn-ghost" style="flex:1">Cancelar</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  };
+  window._bridge.liqSaveAdelanto = async ()=>{
+    const barbero_nombre = document.getElementById('liqAbarbero')?.value;
+    const monto = Number(document.getElementById('liqAmonto')?.value||0);
+    const fecha = document.getElementById('liqAfecha')?.value||null;
+    const descripcion = document.getElementById('liqAdesc')?.value||null;
+    if(!barbero_nombre||!monto){ toast('Completa barbero y monto','error'); return; }
+    showOverlay();
+    const {error} = await sb.from('adelantos_santander').insert({
+      barbero_nombre, monto, fecha, descripcion,
+      mes:liqFiltros.mes, anio:liqFiltros.anio
+    });
+    hideOverlay();
+    if(error){ toast('Error: '+error.message,'error'); return; }
+    document.getElementById('liqAddModal')?.remove();
+    toast('✓ Adelanto guardado');
+    loadLiquidacion();
+  };
+}
+
+function exportLiqCSV(){
+  const vMes = liqVentas.filter(v=>v.n_mes==liqFiltros.mes);
+  const gMes = liqGastos.filter(g=>g.fecha&&Number(g.fecha.split('-')[0])==liqFiltros.anio&&Number(g.fecha.split('-')[1])==liqFiltros.mes);
+  const aMes = liqAdelantosSantander.filter(a=>a.mes==liqFiltros.mes);
+  const barbNombres = [...new Set(vMes.map(v=>v.barbero_nombre).filter(n=>n&&!n.toUpperCase().includes('PISTON')))].sort();
+  const hdr='Mes;Barbero;Con Boleta;Com.Santander;Propina Sant;Subtotal Sant;Total Transf Santander;Adelanto TRF;Sin Boleta;Com.Falabella;Propina Fall;Com.Productos;Adelanto EF;Total Transf Falabella;TOTAL';
+  const lines=[`Liquidación ${MESES[liqFiltros.mes-1]} ${liqFiltros.anio}`,hdr];
+  barbNombres.forEach(nombre=>{
+    const vBarb=vMes.filter(v=>v.barbero_nombre===nombre);
+    const vSant=vBarb.filter(v=>v.tipo==='servicio'&&['TK','TRF'].includes(v.forma_pago));
+    const montoSant=vSant.reduce((s,v)=>s+(v.monto||0),0);
+    const comSant=Math.round(vSant.reduce((s,v)=>{const p=(servicios.find(sx=>sx.nombre===v.servicio_producto)?.comision||50)/100;return s+(v.monto||0)*p;},0));
+    const propSant=vSant.reduce((s,v)=>s+(v.propina||0),0);
+    const adelSant=aMes.filter(a=>a.barbero_nombre===nombre).reduce((s,a)=>s+a.monto,0);
+    const vFall=vBarb.filter(v=>v.tipo==='servicio'&&v.forma_pago==='EF');
+    const montoFall=vFall.reduce((s,v)=>s+(v.monto||0),0);
+    const comFall=Math.round(vFall.reduce((s,v)=>{const p=(servicios.find(sx=>sx.nombre===v.servicio_producto)?.comision||50)/100;return s+(v.monto||0)*p;},0));
+    const propFall=vFall.reduce((s,v)=>s+(v.propina||0),0);
+    const comProd=Math.round(vBarb.filter(v=>v.tipo==='PRODUCTO').reduce((s,v)=>s+(v.monto||0)*0.1,0));
+    const adelFall=gMes.filter(g=>g.barbero_nombre===nombre).reduce((s,g)=>s+g.monto,0);
+    const totalSant=comSant+propSant-adelSant;
+    const totalFall=comFall+propFall+comProd-adelFall;
+    lines.push([MESES[liqFiltros.mes-1],nombre,montoSant,comSant,propSant,comSant+propSant,totalSant,adelSant,montoFall,comFall,propFall,comProd,adelFall,totalFall,totalSant+totalFall].join(';'));
+  });
+  const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8;'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=`liquidacion_${MESES[liqFiltros.mes-1]}_${liqFiltros.anio}.csv`;a.click();
+}
+
 // ============ BRIDGE ASSIGNMENTS ============
 window._bridge.checkPw=checkPw;
 window._bridge.go=go;
@@ -3789,6 +4107,7 @@ window._bridge.concilSetMes=v=>{concilState.mes=Number(v);renderConciliacion();}
 window._bridge.runConciliacion=runConciliacion;
 window._bridge.loadArqueo=loadArqueo;
 window._bridge.loadAnalisis=loadAnalisis;
+window._bridge.loadLiquidacion=loadLiquidacion;
 window._bridge.arqueoExportCSV=arqueoExportCSV;
 window._bridge.saveSaldoInicial=saveSaldoInicial;
 window._bridge.saveSaldoFinal=saveSaldoFinal;
