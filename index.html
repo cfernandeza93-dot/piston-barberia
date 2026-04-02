@@ -4061,14 +4061,14 @@ async function generarPDFBarbero(nombre, row) {
 
   // ─── ENCABEZADO ───────────────────────────────────────────────────────────
   // Logo
-  try { doc.addImage(LOGO_B64,'PNG', M, y, 40, 22); } catch(e){}
-  // Título derecha
+  try { doc.addImage(LOGO_B64,'PNG', M, y, 40, 43); } catch(e){}
+  // Texto alineado verticalmente al centro del logo (43mm alto)
   doc.setFontSize(18).setFont(undefined,'bold').setTextColor(...CLR_NAVY);
-  doc.text('PÍSTON BARBERÍA', PW-M, y+8, {align:'right'});
+  doc.text('PÍSTON BARBERÍA', PW-M, y+12, {align:'right'});
   doc.setFontSize(10).setFont(undefined,'normal').setTextColor(...CLR_DKGRAY);
-  doc.text('Liquidación de Pagos', PW-M, y+14, {align:'right'});
-  doc.text(periodoStr, PW-M, y+19, {align:'right'});
-  y += 28;
+  doc.text('Liquidación de Pagos', PW-M, y+21, {align:'right'});
+  doc.text(periodoStr, PW-M, y+28, {align:'right'});
+  y += 50;
 
   // Línea divisoria
   doc.setDrawColor(...CLR_NAVY).setLineWidth(0.5).line(M, y, PW-M, y);
@@ -4225,12 +4225,12 @@ async function generarPDFBarbero(nombre, row) {
   y = M;
 
   // Mini header en página 2
-  try { doc.addImage(LOGO_B64,'PNG', M, y, 25, 14); } catch(e){}
+  try { doc.addImage(LOGO_B64,'PNG', M, y, 22, 24); } catch(e){}
   doc.setFontSize(11).setFont(undefined,'bold').setTextColor(...CLR_NAVY);
-  doc.text('PÍSTON BARBERÍA — ' + nombre, M+28, y+6);
+  doc.text('PÍSTON BARBERÍA — ' + nombre, M+28, y+9);
   doc.setFontSize(9).setFont(undefined,'normal').setTextColor(...CLR_DKGRAY);
-  doc.text('Liquidación ' + mesNombre + ' ' + liqFiltros.anio, M+28, y+11);
-  y += 20;
+  doc.text('Liquidación ' + mesNombre + ' ' + liqFiltros.anio, M+28, y+16);
+  y += 30;
 
   doc.setFillColor(...CLR_NAVY).rect(M, y, PW-M*2, 7, 'F');
   doc.setFontSize(10).setFont(undefined,'bold').setTextColor(255,255,255);
@@ -4289,12 +4289,12 @@ async function generarPDFBarbero(nombre, row) {
   y = M;
 
   // Mini header pág 3
-  try { doc.addImage(LOGO_B64,'PNG', M, y, 25, 14); } catch(e){}
+  try { doc.addImage(LOGO_B64,'PNG', M, y, 22, 24); } catch(e){}
   doc.setFontSize(11).setFont(undefined,'bold').setTextColor(...CLR_NAVY);
-  doc.text('PÍSTON BARBERÍA — ' + nombre, M+28, y+6);
+  doc.text('PÍSTON BARBERÍA — ' + nombre, M+28, y+9);
   doc.setFontSize(9).setFont(undefined,'normal').setTextColor(...CLR_DKGRAY);
-  doc.text('Liquidación ' + mesNombre + ' ' + liqFiltros.anio, M+28, y+11);
-  y += 20;
+  doc.text('Liquidación ' + mesNombre + ' ' + liqFiltros.anio, M+28, y+16);
+  y += 30;
 
   doc.setFillColor(...CLR_NAVY).rect(M, y, PW-M*2, 7, 'F');
   doc.setFontSize(10).setFont(undefined,'bold').setTextColor(255,255,255);
