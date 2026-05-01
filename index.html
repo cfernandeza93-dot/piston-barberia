@@ -974,7 +974,7 @@ function renderHistorial(){
       if(!v.cod_autorizacion) return false;
       if(hFilters.concil==='SIN_GETNET') return !gn;
       if(!gn) return false;
-      const ventasMismoCod=hData.filter(x=>x.forma_pago==='TK'&&x.anio==v.anio&&x.n_mes==v.n_mes&&x.cod_autorizacion&&String(x.cod_autorizacion).trim().replace(/^0+/,'')==codN);
+      const ventasMismoCod=hData.filter(x=>x.forma_pago==='TK'&&x.anio==v.anio&&x.n_mes==v.n_mes&&x.cod_autorizacion&&normCod(x.cod_autorizacion)==codN && normFecha(x.fecha)==normFecha(v.fecha));
       const totalSys=ventasMismoCod.reduce((s,x)=>s+(x.total||0),0);
       const propinaSys=ventasMismoCod.reduce((s,x)=>s+(x.propina||0),0);
       const diff=Math.abs(gn.total_gn-totalSys)>100||Math.abs(gn.propina_gn-propinaSys)>100;
@@ -1069,7 +1069,7 @@ function renderHistorial(){
         if(!r.cod_autorizacion) return false;
         if(hFilters.concil==='SIN_GETNET') return !gn;
         if(!gn) return false;
-        const vmc=hData.filter(x=>x.forma_pago==='TK'&&x.anio==r.anio&&x.n_mes==r.n_mes&&x.cod_autorizacion&&String(x.cod_autorizacion).trim().replace(/^0+/,'')==codN);
+        const vmc=hData.filter(x=>x.forma_pago==='TK'&&x.anio==r.anio&&x.n_mes==r.n_mes&&x.cod_autorizacion&&normCod(x.cod_autorizacion)==codN && normFecha(x.fecha)==normFecha(r.fecha));
         const tSys=vmc.reduce((s,x)=>s+(x.total||0),0);
         const pSys=vmc.reduce((s,x)=>s+(x.propina||0),0);
         const diff=Math.abs(gn.total_gn-tSys)>100||Math.abs(gn.propina_gn-pSys)>100;
@@ -1086,19 +1086,23 @@ function renderHistorial(){
 }
 
 function getConcilBadge(v){
-  // Solo aplica a TK
   if(v.forma_pago!=='TK') return '<td><span style="color:#CBD5E1;font-size:10px">—</span></td>';
   if(!v.cod_autorizacion) return '<td><span class="badge badge-gray" title="Sin cod. auth">Sin cod</span></td>';
-  const codN=String(v.cod_autorizacion).trim().replace(/^0+/,'');
+  const codN=normCod(v.cod_autorizacion);
+  const fecha=normFecha(v.fecha);
   const k=`${v.anio}-${v.n_mes}-${codN}`;
   const gn=hGetnetMap[k];
   if(!gn){
     return `<td><span class="badge badge-red" style="font-size:10px;cursor:default" title="No encontrado en GetNet">Sin GetNet</span></td>`;
   }
-  // Agrupar ventas del mismo cod para comparar totales
-  const ventasMismoCod=hData.filter(x=>x.forma_pago==='TK'&&x.anio==v.anio&&x.n_mes==v.n_mes&&x.cod_autorizacion&&String(x.cod_autorizacion).trim().replace(/^0+/,'')==codN);
-  const totalSys=ventasMismoCod.reduce((s,x)=>s+(x.total||0),0);
-  const propinaSys=ventasMismoCod.reduce((s,x)=>s+(x.propina||0),0);
+  // Comparar solo contra ventas del mismo cod Y misma fecha
+  const ventasMismoCodFecha=hData.filter(x=>
+    x.forma_pago==='TK' && x.anio==v.anio && x.n_mes==v.n_mes &&
+    x.cod_autorizacion && normCod(x.cod_autorizacion)==codN &&
+    normFecha(x.fecha)==fecha
+  );
+  const totalSys=ventasMismoCodFecha.reduce((s,x)=>s+(x.total||0),0);
+  const propinaSys=ventasMismoCodFecha.reduce((s,x)=>s+(x.propina||0),0);
   if(Math.abs(gn.total_gn-totalSys)>100||Math.abs(gn.propina_gn-propinaSys)>100){
     return `<td><span class="badge badge-amber" style="font-size:10px;cursor:default" title="GetNet: ${fmtCLP(gn.total_gn)} | Sistema: ${fmtCLP(totalSys)}">Diferencia</span></td>`;
   }
@@ -1889,6 +1893,8 @@ function parseFechaGetnet(v){
 }
 
 function normCod(v){ return String(v||'').trim().replace(/^0+/,''); }
+function normFecha(v){ return String(v||'').split('T')[0]; }
+function concilKey(cod, fecha){ return normCod(cod)+'|'+normFecha(fecha); }
 
 function runConciliacion(){
   const { getnetRows, mes, anio } = concilState;
@@ -1898,6 +1904,16 @@ function runConciliacion(){
   const sinCodRows = vtkMes.filter(v=>!v.cod_autorizacion);
   const sinCodTotal = sinCodRows.reduce((s,v)=>s+(v.total||0),0);
 
+  // Agrupar por cod+fecha
+  const ventasByCodFecha={};
+  vtkMes.forEach(v=>{
+    if(!v.cod_autorizacion) return;
+    const k=concilKey(v.cod_autorizacion, v.fecha);
+    if(!ventasByCodFecha[k]) ventasByCodFecha[k]=[];
+    ventasByCodFecha[k].push(v);
+  });
+
+  // También mantener índice solo por cod para "sin GetNet"
   const ventasByCod={};
   vtkMes.forEach(v=>{
     if(!v.cod_autorizacion) return;
@@ -1906,11 +1922,13 @@ function runConciliacion(){
     ventasByCod[k].push(v);
   });
 
+  const getnetKeys=new Set(getnetRows.map(r=>concilKey(r.cod, r.fecha)));
   const getnetCods=new Set(getnetRows.map(r=>normCod(r.cod)));
   let ok=0,diffs=0,missing=0;
   const resultados=getnetRows.map(r=>{
+    const key=concilKey(r.cod, r.fecha);
     const codN=normCod(r.cod);
-    const vsys=ventasByCod[codN];
+    const vsys=ventasByCodFecha[key];
     if(!vsys){ missing++; return{...r,codN,estado:'FALTANTE EN SISTEMA',montoSys:null,propinaSys:null,totalSys:null,vsys:null}; }
     const montoSys=vsys.reduce((s,v)=>s+(v.monto||0),0);
     const propinaSys=vsys.reduce((s,v)=>s+(v.propina||0),0);
@@ -1919,8 +1937,9 @@ function runConciliacion(){
     ok++; return{...r,codN,estado:'OK',montoSys,propinaSys,totalSys,vsys};
   });
 
-  const sinGetNet=Object.entries(ventasByCod).filter(([k])=>!getnetCods.has(k)).map(([k,vs])=>({
-    cod:k,codN:k,estado:'EN SISTEMA SIN GETNET',
+  // Sin GetNet: ventas cuya clave cod+fecha no aparece en GetNet
+  const sinGetNet=Object.entries(ventasByCodFecha).filter(([k])=>!getnetKeys.has(k)).map(([k,vs])=>({
+    cod:normCod(vs[0].cod_autorizacion),codN:normCod(vs[0].cod_autorizacion),estado:'EN SISTEMA SIN GETNET',
     monto:vs.reduce((s,v)=>s+(v.monto||0),0),propina:vs.reduce((s,v)=>s+(v.propina||0),0),
     total:vs.reduce((s,v)=>s+(v.total||0),0),montoSys:null,propinaSys:null,totalSys:null,vsys:vs,
     fecha:vs[0].fecha,marca:'—'
