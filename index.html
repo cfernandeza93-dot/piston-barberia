@@ -965,7 +965,7 @@ function renderHistorial(){
   // Filtro por estado conciliación
   if(hFilters.concil){
     rows=rows.filter(v=>{
-      if(v.forma_pago!=='TK') return hFilters.concil==='NO_APLICA';
+      if(v.forma_pago!=='TK'||v.tipo==='PRODUCTO') return hFilters.concil==='NO_APLICA';
       if(hFilters.concil==='NO_APLICA') return false;
       const codN=String(v.cod_autorizacion||'').trim().replace(/^0+/,'');
       const k=`${v.anio}-${v.n_mes}-${codN}`;
@@ -1060,7 +1060,7 @@ function renderHistorial(){
     }
     if(hFilters.concil){
       rows=rows.filter(r=>{
-        if(r.forma_pago!=='TK') return hFilters.concil==='NO_APLICA';
+        if(r.forma_pago!=='TK'||r.tipo==='PRODUCTO') return hFilters.concil==='NO_APLICA';
         if(hFilters.concil==='NO_APLICA') return false;
         const codN=String(r.cod_autorizacion||'').trim().replace(/^0+/,'');
         const k=`${r.anio}-${r.n_mes}-${codN}`;
@@ -1087,6 +1087,7 @@ function renderHistorial(){
 
 function getConcilBadge(v){
   if(v.forma_pago!=='TK') return '<td><span style="color:#CBD5E1;font-size:10px">—</span></td>';
+  if(v.tipo==='PRODUCTO') return '<td><span style="color:#CBD5E1;font-size:10px">—</span></td>';
   if(!v.cod_autorizacion) return '<td><span class="badge badge-gray" title="Sin cod. auth">Sin cod</span></td>';
   const codN=normCod(v.cod_autorizacion);
   const fecha=normFecha(v.fecha);
