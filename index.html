@@ -938,7 +938,7 @@ async function loadHistorial(){
   const {data:raw}=await sb.rpc('get_ventas_historial');
   hData=raw||[];
   // Cargar todos los registros GetNet para cruzar en historial
-  const {data:gn}=await sb.from('getnet_transacciones').select('cod_aut,anio,mes,valor_transaccion,propina').range(0,4999);
+  const {data:gn}=await sb.from('getnet_transacciones').select('cod_aut,anio,mes,fecha_venta,valor_transaccion,propina').range(0,4999);
   hGetnetMap={};
   (gn||[]).forEach(r=>{
     const k=`${r.anio}-${r.mes}-${String(r.cod_aut||'').trim().replace(/^0+/,'')}-${String(r.fecha_venta||'').split('T')[0]}`;
