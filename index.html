@@ -2001,6 +2001,11 @@ function runConciliacion(){
       </div>
       ${(diffs+missing+sinGetNet.length)>0?`<button class="btn btn-ghost btn-sm" onclick="exportConcilErrors()">⬇ Exportar errores CSV</button>`:''}
     </div>
+    <div style="margin-top:10px;margin-bottom:4px">
+      <input type="text" id="concilBuscador" placeholder="Buscar por código de autorización, fecha o marca..."
+        oninput="window._bridge.concilBuscar(this.value)"
+        style="width:100%;max-width:420px;padding:7px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;box-sizing:border-box">
+    </div>
     <div style="overflow-x:auto" id="concilTablaWrap">
       ${renderConcilTabla(todosResultados)}
     </div>
@@ -2016,16 +2021,33 @@ function runConciliacion(){
     {k:'SIN COD. AUTH', bg:'#F1F5F9', color:'#475569', border:'#CBD5E1'},
   ];
   window._bridge.concilFiltrar = k => {
-    // Actualizar estilos de botones
+    concilState.filtroEstado = k;
     filtroMeta.forEach(f=>{
       const btn=document.getElementById(`cfbtn-${f.k.replace(/ /g,'_')}`);
       if(!btn) return;
       if(f.k===k){ btn.style.background=f.bg; btn.style.color=f.color; btn.style.borderColor=f.border; }
       else { btn.style.background='#F1F5F9'; btn.style.color='#475569'; btn.style.borderColor='transparent'; }
     });
-    const lista = k==='TODOS' ? concilState.todosResultados : concilState.todosResultados.filter(r=>r.estado===k);
-    document.getElementById('concilTablaWrap').innerHTML = renderConcilTabla(lista);
+    const busq = document.getElementById('concilBuscador')?.value||'';
+    actualizarTablaConcil(k, busq);
   };
+  window._bridge.concilBuscar = busq => {
+    actualizarTablaConcil(concilState.filtroEstado||'TODOS', busq);
+  };
+}
+
+function actualizarTablaConcil(estado, busq){
+  let lista = estado==='TODOS' ? concilState.todosResultados : concilState.todosResultados.filter(r=>r.estado===estado);
+  if(busq && busq.trim()){
+    const q = busq.trim().toLowerCase();
+    lista = lista.filter(r=>
+      String(r.cod||'').toLowerCase().includes(q) ||
+      String(r.fecha||'').toLowerCase().includes(q) ||
+      String(r.marca||'').toLowerCase().includes(q)
+    );
+  }
+  const wrap = document.getElementById('concilTablaWrap');
+  if(wrap) wrap.innerHTML = renderConcilTabla(lista);
 }
 
 function renderConcilTabla(lista){
