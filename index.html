@@ -941,7 +941,7 @@ async function loadHistorial(){
   const {data:gn}=await sb.from('getnet_transacciones').select('cod_aut,anio,mes,valor_transaccion,propina').range(0,4999);
   hGetnetMap={};
   (gn||[]).forEach(r=>{
-    const k=`${r.anio}-${r.mes}-${String(r.cod_aut||'').trim().replace(/^0+/,'')}`;
+    const k=`${r.anio}-${r.mes}-${String(r.cod_aut||'').trim().replace(/^0+/,'')}-${String(r.fecha_venta||'').split('T')[0]}`;
     if(!hGetnetMap[k]) hGetnetMap[k]={total_gn:0,propina_gn:0,count:0};
     hGetnetMap[k].total_gn+=r.valor_transaccion||0;
     hGetnetMap[k].propina_gn+=r.propina||0;
@@ -968,7 +968,7 @@ function renderHistorial(){
       if(v.forma_pago!=='TK'||v.tipo==='PRODUCTO') return hFilters.concil==='NO_APLICA';
       if(hFilters.concil==='NO_APLICA') return false;
       const codN=String(v.cod_autorizacion||'').trim().replace(/^0+/,'');
-      const k=`${v.anio}-${v.n_mes}-${codN}`;
+      const k=`${v.anio}-${v.n_mes}-${codN}-${normFecha(v.fecha)}`;
       const gn=hGetnetMap[k];
       if(hFilters.concil==='SIN_COD') return !v.cod_autorizacion;
       if(!v.cod_autorizacion) return false;
@@ -1063,7 +1063,7 @@ function renderHistorial(){
         if(r.forma_pago!=='TK'||r.tipo==='PRODUCTO') return hFilters.concil==='NO_APLICA';
         if(hFilters.concil==='NO_APLICA') return false;
         const codN=String(r.cod_autorizacion||'').trim().replace(/^0+/,'');
-        const k=`${r.anio}-${r.n_mes}-${codN}`;
+        const k=`${r.anio}-${r.n_mes}-${codN}-${normFecha(r.fecha)}`;
         const gn=hGetnetMap[k];
         if(hFilters.concil==='SIN_COD') return !r.cod_autorizacion;
         if(!r.cod_autorizacion) return false;
@@ -1091,7 +1091,7 @@ function getConcilBadge(v){
   if(!v.cod_autorizacion) return '<td><span class="badge badge-gray" title="Sin cod. auth">Sin cod</span></td>';
   const codN=normCod(v.cod_autorizacion);
   const fecha=normFecha(v.fecha);
-  const k=`${v.anio}-${v.n_mes}-${codN}`;
+  const k=`${v.anio}-${v.n_mes}-${codN}-${fecha}`;
   const gn=hGetnetMap[k];
   if(!gn){
     return `<td><span class="badge badge-red" style="font-size:10px;cursor:default" title="No encontrado en GetNet">Sin GetNet</span></td>`;
