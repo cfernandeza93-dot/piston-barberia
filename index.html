@@ -977,7 +977,7 @@ function renderHistorial(){
       const ventasMismoCod=hData.filter(x=>x.forma_pago==='TK'&&x.anio==v.anio&&x.n_mes==v.n_mes&&x.cod_autorizacion&&normCod(x.cod_autorizacion)==codN && normFecha(x.fecha)==normFecha(v.fecha));
       const totalSys=ventasMismoCod.reduce((s,x)=>s+(x.total||0),0);
       const propinaSys=ventasMismoCod.reduce((s,x)=>s+(x.propina||0),0);
-      const diff=Math.abs(gn.total_gn-totalSys)>100||Math.abs(gn.propina_gn-propinaSys)>100;
+      const diff=Math.abs(gn.total_gn-totalSys)>0||Math.abs(gn.propina_gn-propinaSys)>0;
       if(hFilters.concil==='DIFERENCIA') return diff;
       if(hFilters.concil==='OK') return !diff;
       return true;
@@ -1072,7 +1072,7 @@ function renderHistorial(){
         const vmc=hData.filter(x=>x.forma_pago==='TK'&&x.anio==r.anio&&x.n_mes==r.n_mes&&x.cod_autorizacion&&normCod(x.cod_autorizacion)==codN && normFecha(x.fecha)==normFecha(r.fecha));
         const tSys=vmc.reduce((s,x)=>s+(x.total||0),0);
         const pSys=vmc.reduce((s,x)=>s+(x.propina||0),0);
-        const diff=Math.abs(gn.total_gn-tSys)>100||Math.abs(gn.propina_gn-pSys)>100;
+        const diff=Math.abs(gn.total_gn-tSys)>0||Math.abs(gn.propina_gn-pSys)>0;
         if(hFilters.concil==='DIFERENCIA') return diff;
         if(hFilters.concil==='OK') return !diff;
         return true;
@@ -1103,7 +1103,7 @@ function getConcilBadge(v){
   );
   const totalSys=ventasMismoCodFecha.reduce((s,x)=>s+(x.total||0),0);
   const propinaSys=ventasMismoCodFecha.reduce((s,x)=>s+(x.propina||0),0);
-  if(Math.abs(gn.total_gn-totalSys)>100||Math.abs(gn.propina_gn-propinaSys)>100){
+  if(Math.abs(gn.total_gn-totalSys)>0||Math.abs(gn.propina_gn-propinaSys)>0){
     return `<td><span class="badge badge-amber" style="font-size:10px;cursor:default" title="GetNet: ${fmtCLP(gn.total_gn)} | Sistema: ${fmtCLP(totalSys)}">Diferencia</span></td>`;
   }
   return `<td><span class="badge badge-green" style="font-size:10px;cursor:default" title="OK: ${fmtCLP(gn.total_gn)}">✓ OK</span></td>`;
@@ -1933,7 +1933,7 @@ function runConciliacion(){
     const montoSys=vsys.reduce((s,v)=>s+(v.monto||0),0);
     const propinaSys=vsys.reduce((s,v)=>s+(v.propina||0),0);
     const totalSys=vsys.reduce((s,v)=>s+(v.total||0),0);
-    if(Math.abs(r.monto-montoSys)>100||Math.abs(r.propina-propinaSys)>100){ diffs++; return{...r,codN,estado:'DIFERENCIA',montoSys,propinaSys,totalSys,vsys}; }
+    if(Math.abs(r.monto-montoSys)>0||Math.abs(r.propina-propinaSys)>0){ diffs++; return{...r,codN,estado:'DIFERENCIA',montoSys,propinaSys,totalSys,vsys}; }
     ok++; return{...r,codN,estado:'OK',montoSys,propinaSys,totalSys,vsys};
   });
 
