@@ -4662,15 +4662,16 @@ function propParseAgenda(aoa){
   const ix={
     fecha: col(/fecha de realizacion/,/fecha de la reserva/,/fecha reserva/,/fecha cita/,'fecha',/^fecha y hora/,/^inicio/),
     hora: col('hora',/hora de inicio/,/hora inicio/),
-    cliente: col('cliente',/nombre del cliente/,/nombre cliente/,/^cliente /),
-    apellido: col('apellido',/apellido del cliente/,/apellidos/),
+    cliente: col('cliente',/nombre del cliente/,/nombre cliente/,'nombre',/^nombres?$/),
+    apellido: col('apellido',/apellido del cliente/,/^apellidos?$/),
     servicio: col('servicio',/nombre del servicio/,/^servicio /),
     prestador: col('prestador',/profesional/,/^prestador /,/staff/),
     estado: hdr.findIndex(c=>/^estado( de la reserva| reserva)?$/.test(c)),
-    pago: hdr.findIndex(c=>/estado de pago|pagad|pago/.test(c)&&!/^estado$/.test(c)),
+    pago: (()=>{const i=hdr.indexOf('estado de pago'); return i>=0?i:hdr.findIndex(c=>/pagad/.test(c));})(),
   };
   if(ix.fecha<0) ix.fecha=hdr.findIndex(c=>c.includes('fecha'));
-  if(ix.cliente<0) ix.cliente=hdr.findIndex(c=>c.includes('cliente'));
+  // "N° de Cliente" es un número, no el nombre
+  if(ix.cliente<0) ix.cliente=hdr.findIndex(c=>c.includes('cliente')&&!/^(n|no|nro|numero|id) de cliente/.test(c));
   if(ix.servicio<0) ix.servicio=hdr.findIndex(c=>c.includes('servicio'));
   const faltan=['fecha','cliente','servicio','prestador'].filter(k=>ix[k]<0);
   if(faltan.length) throw new Error('Al reporte le faltan columnas: '+faltan.join(', '));
@@ -4681,8 +4682,8 @@ function propParseAgenda(aoa){
     if(!r.some(c=>String(c??'').trim())) continue;
     const {fecha,hora}=propParseFechaHora(r[ix.fecha], ix.hora>=0?r[ix.hora]:undefined);
     if(!fecha) continue;
-    let cliente=String(r[ix.cliente]??'').trim();
-    if(ix.apellido>=0 && r[ix.apellido]) cliente=(cliente+' '+String(r[ix.apellido]).trim()).trim();
+    let cliente=String(r[ix.cliente]??'').trim().replace(/\s+/g,' ');
+    if(ix.apellido>=0 && String(r[ix.apellido]??'').trim()) cliente=(cliente+' '+String(r[ix.apellido]).trim()).replace(/\s+/g,' ').trim();
     const estado=ix.estado>=0?String(r[ix.estado]??'').trim():'Asiste';
     const est=propNorm(estado);
     if(est && est!=='asiste'){ omitidas[estado]=(omitidas[estado]||0)+1; continue; }
@@ -4692,7 +4693,7 @@ function propParseAgenda(aoa){
       servicio:String(r[ix.servicio]??'').trim(),
       prestador:String(r[ix.prestador]??'').trim(),
       estado: estado||'Asiste',
-      pagada: !!pagoTxt && pagoTxt.startsWith('pagad'),
+      pagada: !!pagoTxt && (pagoTxt.startsWith('pagad')||pagoTxt.includes('pago asociado')),
     });
   }
   return {citas, omitidas, columnas:ix};
