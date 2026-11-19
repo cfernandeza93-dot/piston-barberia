@@ -1913,6 +1913,7 @@ async function processConcilFile(input){
     const rows = raw.map(r=>({
       cod_aut:          String(getGN(r,'COD.AUT','CODAUT')||'').trim(),
       fecha_venta:      parseFechaGetnet(getGN(r,'FECHA VENTA','FECHAVENTA')),
+      hora_venta:       parseHoraGetnet(getGN(r,'FECHA VENTA','FECHAVENTA'),getGN(r,'HORA VENTA','HORAVENTA','HORA')),
       mes:              concilState.mes,
       anio:             concilState.anio,
       marca:            getGN(r,'MARCA')||null,
@@ -1958,6 +1959,18 @@ function parseFechaGetnet(v){
   const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if(iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
   return null;
+}
+
+// Hora del pago (HH:MM:SS) desde "DD/MM/YYYY HH:MM:SS", un número de Excel o una columna de hora aparte
+function parseHoraGetnet(v, horaAparte){
+  const src=horaAparte||v; if(src===undefined||src===null||src==='') return null;
+  const n=Number(src);
+  if(!isNaN(n)&&typeof src!=='boolean'&&String(src).trim()!==''&&n>0&&n<60000){
+    const secs=Math.round((n%1)*86400); if(!secs) return null;
+    return [Math.floor(secs/3600),Math.floor(secs/60)%60,secs%60].map(x=>String(x).padStart(2,'0')).join(':');
+  }
+  const m=String(src).match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  return m?`${m[1].padStart(2,'0')}:${m[2]}:${m[3]||'00'}`:null;
 }
 
 function normCod(v){ return String(v||'').trim().replace(/^0+/,''); }
@@ -4769,6 +4782,18 @@ function propRepartir(total, montos){
   return out;
 }
 function propMin(h){ const m=String(h||'').match(/(\d{1,2}):(\d{2})/); return m?(+m[1])*60+(+m[2]):0; }
+// Qué tan lógico es que un pago (hora GetNet) corresponda a una cita: lo normal es pagar ~40 min después de la hora de inicio.
+// Devuelve null si falta alguna hora.
+function propCostoHora(citaHora, pagoHora){
+  if(!citaHora||!pagoHora) return null;
+  const d=propMin(pagoHora)-propMin(citaHora);
+  if(d<-20) return 1000-d;            // pagó bastante antes de la cita: muy raro
+  return Math.abs(d-40);
+}
+function propCostoGrupo(grupo, g){
+  const cs=grupo.map(p=>propCostoHora(p.hora,g.hora)).filter(c=>c!==null);
+  return cs.length?Math.min(...cs):null;
+}
 
 // --- Sugerencias de pago para un día ---
 // props: propuestas pendientes del día (con id, hora, cliente, servicio_agenda, barbero_nombre, pagada_agenda, origen, getnet_cod)
@@ -4782,7 +4807,7 @@ function propDisponibles(gnDia, ventasDia){
     u.monto+=(v.total||0)-(v.propina||0); u.prop+=v.propina||0; if(v.cliente) u.clientes.push(propNorm(v.cliente)); });
   const byCod={};
   gnDia.forEach(g=>{const c=propCod(g.cod_aut);
-    (byCod[c]=byCod[c]||{cod:g.cod_aut,venta:0,prop:0,trans:0,total:0,parcial:false,tarjeta:`${g.marca||''} ${g.tipo||''}`.trim()});
+    (byCod[c]=byCod[c]||{cod:g.cod_aut,venta:0,prop:0,trans:0,total:0,parcial:false,hora:String(g.hora_venta||'').slice(0,5),tarjeta:`${g.marca||''} ${g.tipo||''}`.trim()});
     byCod[c].venta+=g.valor_venta||0; byCod[c].prop+=g.propina||0; byCod[c].total+=g.valor_transaccion||0;});
   const out=[];
   for(const [c,g] of Object.entries(byCod)){
@@ -4830,8 +4855,10 @@ function propSugerirDia(props, gnDia, ventasDia, servicios){
   const porCliente={};
   resto.forEach(p=>{ if(propEsGenerico(p.cliente)) return; const k=propNorm(p.cliente); (porCliente[k]=porCliente[k]||[]).push(p); });
   Object.values(porCliente).filter(g=>g.length>1).forEach(grupo=>{
-    const g=libres.find(x=>propCombo(grupo,x.venta,preciosDe));
-    if(g) asignar(grupo,g,`Un pago GetNet de ${g.venta} = ${grupo.length} servicios de ${grupo[0].cliente}`,'alta');
+    const cands=libres.filter(x=>propCombo(grupo,x.venta,preciosDe));
+    cands.sort((a,b)=>(propCostoGrupo(grupo,a)??0)-(propCostoGrupo(grupo,b)??0));
+    const g=cands[0];
+    if(g) asignar(grupo,g,`Un pago GetNet de ${g.venta}${g.hora?' a las '+g.hora:''} = ${grupo.length} servicios de ${grupo[0].cliente}`,'alta');
   });
   resto=resto.filter(p=>!sug[p.id]);
 
@@ -4843,7 +4870,8 @@ function propSugerirDia(props, gnDia, ventasDia, servicios){
       const a=resto[i], b=resto[j];
       if(sug[a.id]||sug[b.id]) continue;
       if(!propCombo([a,b],g.venta,preciosDe)) continue;
-      const dist=Math.abs(propMin(a.hora)-propMin(b.hora));
+      const ch=propCostoGrupo([a,b],g);
+      const dist=ch!==null?ch:Math.abs(propMin(a.hora)-propMin(b.hora));
       if(!mejor||dist<mejor.dist) mejor={a,b,dist};
     }
     if(mejor){
@@ -4864,6 +4892,28 @@ function propSugerirDia(props, gnDia, ventasDia, servicios){
     const iguales=pagos.every(x=>x.venta===g.venta&&x.prop===g.prop);
     return [iguales?'media':'baja', `${citas.length} cita${citas.length===1?'':'s'} y ${pagos.length} pago${pagos.length===1?'':'s'} GetNet de montos parecidos ese día — ${iguales?'son iguales, da lo mismo cuál':'confirma el código (cambian monto o propina)'}`];
   };
+  const conHora=resto.length && resto.every(p=>p.hora) && libres.length && libres.every(g=>g.hora);
+  if(conHora){
+    const dow=resto[0]?propDiaSemana(resto[0].fecha):0, promoDia=dow===2||dow===3;
+    const pares=[];
+    for(const p of resto){ const precios=preciosDe(p);
+      for(const g of libres){ if(!precios.includes(g.venta)) continue;
+        const c=propCostoHora(p.hora,g.hora)+(g.venta===precios[0]||promoDia?0:15);
+        pares.push({p,g,c}); } }
+    pares.sort((a,b)=>a.c-b.c);
+    const tomadas=new Set(), usados=new Set();
+    for(const x of pares){
+      if(tomadas.has(x.p.id)||usados.has(x.g)) continue;
+      // ¿hay otro pago libre casi igual de cercano para esta cita? -> menos seguro
+      const alt=pares.filter(y=>y.p===x.p&&y.g!==x.g&&!usados.has(y.g)).map(y=>y.c);
+      const segundo=alt.length?Math.min(...alt):Infinity;
+      const conf=x.c<=35&&segundo-x.c>=15?'alta':(x.c<=90?'media':'baja');
+      const motivo=`Pago GetNet a las ${x.g.hora} (cita ${x.p.hora})`+(conf==='alta'?'':conf==='media'?' — hay otro pago parecido cerca, revisa':' — hora poco calzada, revisa');
+      tomadas.add(x.p.id); usados.add(x.g);
+      asignar([x.p],x.g,motivo,conf);
+    }
+    resto=resto.filter(p=>!sug[p.id]);
+  }
   for(const pasada of [0,1]){
     for(const p of resto){
       if(sug[p.id]) continue;
@@ -4904,7 +4954,7 @@ async function loadPropuestas(){
     if(fechas.length){
       const min=fechas[0], max=fechas[fechas.length-1];
       const [g,v]=await Promise.all([
-        sb.from('getnet_transacciones').select('cod_aut,fecha_venta,valor_venta,propina,valor_transaccion,marca,tipo').gte('fecha_venta',min).lte('fecha_venta',max).range(0,4999),
+        sb.from('getnet_transacciones').select('cod_aut,fecha_venta,hora_venta,valor_venta,propina,valor_transaccion,marca,tipo').gte('fecha_venta',min).lte('fecha_venta',max).range(0,4999),
         sb.from('ventas').select('id,fecha,barbero_nombre,cliente,forma_pago,cod_autorizacion,total,propina,tipo').gte('fecha',min).lte('fecha',max).range(0,4999)
       ]);
       if(g.error) throw g.error; if(v.error) throw v.error;
@@ -5010,7 +5060,7 @@ function renderPropuestas(){
       const usadosDraft=new Set(st.props.filter(p=>p.estado==='pendiente'&&p.fecha===f&&st.drafts[p.id]?.forma==='TK').map(p=>propCod(st.drafts[p.id].cod)));
       const sueltos=(st.disp[f]||[]).filter(g=>!usadosDraft.has(propCod(g.cod)));
       if(sueltos.length) html+=`<div class="card" style="background:#FFFBEB;border-color:#FDE68A;padding:10px 14px;margin-bottom:10px;font-size:12px">
-        <b>Pagos GetNet de este día sin propuesta:</b> ${sueltos.map(g=>`<span style="display:inline-block;margin:3px 8px 3px 0">${propEsc(g.cod)} · ${g.parcial?'queda ':''}${fmtCLP(g.venta)}${g.prop?` + ${fmtCLP(g.prop)} prop.`:''} <button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" onclick="window._bridge.propCrearDesdePago('${f}','${propEsc(g.cod)}')">+ crear venta</button></span>`).join('')}
+        <b>Pagos GetNet de este día sin propuesta:</b> ${sueltos.map(g=>`<span style="display:inline-block;margin:3px 8px 3px 0">${propEsc(g.cod)}${g.hora?' ('+g.hora+')':''} · ${g.parcial?'queda ':''}${fmtCLP(g.venta)}${g.prop?` + ${fmtCLP(g.prop)} prop.`:''} <button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" onclick="window._bridge.propCrearDesdePago('${f}','${propEsc(g.cod)}')">+ crear venta</button></span>`).join('')}
         <div style="color:#92400E;margin-top:4px">Puede ser un cliente sin cita, o un pago que corresponde a una propuesta de abajo con otro monto (por ejemplo, con productos).</div></div>`;
     }
     for(const p of delDia) html+= p.estado==='pendiente'?propCardPendiente(p):propCardCerrada(p);
@@ -5045,7 +5095,7 @@ function propCardPendiente(p){
       : `<select style="min-width:240px" onchange="window._bridge.propSet('${p.id}','cod',this.value)">
           <option value="">— Código GetNet —</option>
           ${disp.map(g=>{const usadoPor=propState.props.filter(q=>q.id!==p.id&&q.estado==='pendiente'&&q.fecha===p.fecha&&propState.drafts[q.id]?.forma==='TK'&&propCod(propState.drafts[q.id].cod)===propCod(g.cod)).map(q=>q.cliente||'sin cita');
-            return `<option value="${propEsc(g.cod)}" ${propCod(d.cod)===propCod(g.cod)?'selected':''}>${propEsc(g.cod)} · ${g.parcial?'queda ':''}${fmtCLP(g.venta)}${g.prop?' + '+fmtCLP(g.prop)+' prop.':''}${g.parcial?' (de '+fmtCLP(g.total)+')':''} · ${propEsc(g.tarjeta)}${usadoPor.length?' — en: '+propEsc(usadoPor.join(', ')):''}</option>`;}).join('')}
+            return `<option value="${propEsc(g.cod)}" ${propCod(d.cod)===propCod(g.cod)?'selected':''}>${propEsc(g.cod)}${g.hora?' · '+g.hora:''} · ${g.parcial?'queda ':''}${fmtCLP(g.venta)}${g.prop?' + '+fmtCLP(g.prop)+' prop.':''}${g.parcial?' (de '+fmtCLP(g.total)+')':''} · ${propEsc(g.tarjeta)}${usadoPor.length?' — en: '+propEsc(usadoPor.join(', ')):''}</option>`;}).join('')}
           ${d.cod&&!disp.some(g=>propCod(g.cod)===propCod(d.cod))?`<option value="${propEsc(d.cod)}" selected>${propEsc(d.cod)} (no está en GetNet)</option>`:''}
           <option value="__otro">Otro código…</option>
         </select>`) : '';
