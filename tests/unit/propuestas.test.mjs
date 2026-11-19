@@ -126,3 +126,10 @@ test('detecta citas que ya tienen venta (por nombre y por cantidad)', () => {
   ];
   assert.deepEqual([...L.propDetectarRegistradas(c, v)].sort(), ['a', 'b']);
 });
+
+test('en un día sin promo no se sugiere el precio promo (caso 009403 del 16-nov)', () => {
+  const { sug } = sugerir('2026-11-16');
+  const s = de(sug, 'Juan Aguila');
+  assert.notEqual(s.cod, '009403', 'el pago de $14.000 no es un corte de lunes');
+  assert.equal(s.precio, 16000);
+});

@@ -141,7 +141,7 @@ function propServicio(nombreAgenda, fecha, servicios){
   const precios=[normal.precio];
   let promo=null;
   if(promoSvc && (dow===2||dow===3)){ promo=promoSvc; if(!precios.includes(promoSvc.precio_promo)) precios.push(promoSvc.precio_promo); }
-  else if(promoSvc && promoSvc.precio_promo && !precios.includes(promoSvc.precio_promo)){ promo=promoSvc; precios.push(promoSvc.precio_promo); }
+  // En días sin promo no se sugiere el precio promo (el barbero puede elegirlo a mano si corresponde)
   return {normal, promo, precios: precios.filter(p=>p>0)};
 }
 

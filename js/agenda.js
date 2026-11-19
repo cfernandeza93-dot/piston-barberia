@@ -35,7 +35,7 @@ let cache = null;
 async function cargarAgendaCitas(forzar = false) {
   if (cache && !forzar) return cache;
   cache = await traerTodo(() => sb.from('agenda_citas')
-    .select('fecha,hora,cliente,telefono,email,servicio,precio,prestador,estado,pagada,origen').order('fecha').order('hora'));
+    .select('fecha,hora,cliente,telefono,email,servicio,precio,prestador,estado,pagada,origen').order('fecha').order('hora').order('clave'));
   return cache;
 }
 function olvidarAgendaCitas() { cache = null; }

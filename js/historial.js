@@ -1,6 +1,7 @@
 // Pestaña Historial
 import { DIAS_ES, MESES, barberos, fmtCLP, hideOverlay, loadCatalogos, sb, servicios, showOverlay, toast, today } from './core.js';
 import { normCod, normFecha } from './conciliacion.js';
+import { traerTodo } from './agenda.js';
 
 // ============ HISTORIAL ============
 let hFilters={barbero:'',tipo:'',pago:'',mes:'',buscar:'',anio:'',concil:''};
@@ -16,7 +17,8 @@ async function loadHistorial(){
   const {data:raw}=await sb.rpc('get_ventas_historial');
   hData=raw||[];
   // Cargar todos los registros GetNet para cruzar en historial
-  const {data:gn}=await sb.from('getnet_transacciones').select('cod_aut,anio,mes,fecha_venta,valor_transaccion,propina').range(0,4999);
+  // Supabase entrega máximo 1.000 filas por consulta: se piden todas por páginas
+  const gn=await traerTodo(()=>sb.from('getnet_transacciones').select('id,cod_aut,anio,mes,fecha_venta,valor_transaccion,propina').order('fecha_venta').order('id'));
   hGetnetMap={};
   (gn||[]).forEach(r=>{
     const k=`${r.anio}-${r.mes}-${String(r.cod_aut||'').trim().replace(/^0+/,'')}-${String(r.fecha_venta||'').split('T')[0]}`;
@@ -43,7 +45,7 @@ function renderHistorial(){
   // Filtro por estado conciliación
   if(hFilters.concil){
     rows=rows.filter(v=>{
-      if(v.forma_pago!=='TK'||v.tipo==='PRODUCTO') return hFilters.concil==='NO_APLICA';
+      if(v.forma_pago!=='TK') return hFilters.concil==='NO_APLICA';
       if(hFilters.concil==='NO_APLICA') return false;
       const codN=String(v.cod_autorizacion||'').trim().replace(/^0+/,'');
       const k=`${v.anio}-${v.n_mes}-${codN}-${normFecha(v.fecha)}`;
@@ -138,7 +140,7 @@ function renderHistorial(){
     }
     if(hFilters.concil){
       rows=rows.filter(r=>{
-        if(r.forma_pago!=='TK'||r.tipo==='PRODUCTO') return hFilters.concil==='NO_APLICA';
+        if(r.forma_pago!=='TK') return hFilters.concil==='NO_APLICA';
         if(hFilters.concil==='NO_APLICA') return false;
         const codN=String(r.cod_autorizacion||'').trim().replace(/^0+/,'');
         const k=`${r.anio}-${r.n_mes}-${codN}-${normFecha(r.fecha)}`;
@@ -165,7 +167,6 @@ function renderHistorial(){
 
 function getConcilBadge(v){
   if(v.forma_pago!=='TK') return '<td><span style="color:#CBD5E1;font-size:10px">—</span></td>';
-  if(v.tipo==='PRODUCTO') return '<td><span style="color:#CBD5E1;font-size:10px">—</span></td>';
   if(!v.cod_autorizacion) return '<td><span class="badge badge-gray" title="Sin cod. auth">Sin cod</span></td>';
   const codN=normCod(v.cod_autorizacion);
   const fecha=normFecha(v.fecha);
@@ -182,10 +183,14 @@ function getConcilBadge(v){
   );
   const totalSys=ventasMismoCodFecha.reduce((s,x)=>s+(x.total||0),0);
   const propinaSys=ventasMismoCodFecha.reduce((s,x)=>s+(x.propina||0),0);
+  // Si el mismo pago cubre varias ventas (servicios de distintos barberos, productos), se indica y se listan
+  const n=ventasMismoCodFecha.length;
+  const detalle=n>1?' | Mismo pago: '+ventasMismoCodFecha.map(x=>`${x.tipo==='PRODUCTO'?'Producto':'Servicio'} ${x.servicio_producto||''} ${fmtCLP(x.total||0)} (${x.barbero_nombre||''})`).join(' + ').replace(/"/g,"'"):'';
+  const comp=n>1?` <span style="font-size:9px;opacity:.8">· ${n} ventas</span>`:'';
   if(Math.abs(gn.total_gn-totalSys)>0||Math.abs(gn.propina_gn-propinaSys)>0){
-    return `<td><span class="badge badge-amber" style="font-size:10px;cursor:default" title="GetNet: ${fmtCLP(gn.total_gn)} | Sistema: ${fmtCLP(totalSys)}">Diferencia</span></td>`;
+    return `<td><span class="badge badge-amber" style="font-size:10px;cursor:default" title="GetNet: ${fmtCLP(gn.total_gn)} | Sistema: ${fmtCLP(totalSys)}${detalle}">Diferencia${comp}</span></td>`;
   }
-  return `<td><span class="badge badge-green" style="font-size:10px;cursor:default" title="OK: ${fmtCLP(gn.total_gn)}">✓ OK</span></td>`;
+  return `<td><span class="badge badge-green" style="font-size:10px;cursor:default" title="OK: ${fmtCLP(gn.total_gn)}${detalle}">✓ OK${comp}</span></td>`;
 }
 
 function renderHistorialRow(v,bOpts,sOpts){

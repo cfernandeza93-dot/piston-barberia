@@ -160,6 +160,20 @@ test('Propuestas: importa el reporte de AgendaPro, sugiere y acepta', async () =
   const anaDb = await page.evaluate(id => window.__db.propuestas_venta.find(p => p.id === id), ana.id);
   assert.equal(anaDb.estado, 'aceptada');
   assert.equal(anaDb.borrador, null);
+
+  // Si el pago no cuadra con GetNet, pide confirmar antes de crear la venta
+  const juan = P.find(p => p.cliente === 'Juan Prueba');
+  const cj = page.locator(`.prop-card[data-prop-id="${juan.id}"]`);
+  await cj.locator('input[placeholder="N° Boleta *"]').fill('777');
+  await cj.locator('input[placeholder="N° Boleta *"]').dispatchEvent('change');
+  const monto = page.locator(`.prop-card[data-prop-id="${juan.id}"] label:has-text("Monto") input`).first();
+  await monto.fill('15000'); await monto.dispatchEvent('change');
+  const antes = await page.evaluate(() => window.__db.ventas.length);
+  await page.locator(`.prop-card[data-prop-id="${juan.id}"] button:has-text("Aceptar")`).click();
+  await page.waitForSelector(`.prop-card[data-prop-id="${juan.id}"] button:has-text("Confirmar de todas formas")`);
+  assert.equal(await page.evaluate(() => window.__db.ventas.length), antes, 'no debe crear la venta sin confirmar');
+  await page.locator(`.prop-card[data-prop-id="${juan.id}"] button:has-text("Confirmar de todas formas")`).click();
+  await page.waitForFunction(n => window.__db.ventas.length > n, antes);
   assert.deepEqual(errores, []);
   await page.close();
 });
@@ -197,6 +211,19 @@ test('Análisis: clientes en riesgo, retención, ocupación, margen y totales', 
   await page.click('button:has-text("Totales")');
   await page.waitForTimeout(800);
   assert.match(await page.textContent('#anContenido'), /Análisis/);
+  assert.deepEqual(errores, []);
+  await page.close();
+});
+
+test('Historial: un producto pagado con tarjeta también muestra su estado de GetNet', async () => {
+  const { page, errores } = await abrir();
+  await page.click('.tab-btn:has-text("Historial")');
+  await page.waitForTimeout(800);
+  // venta de servicio + producto con el mismo código 100002 (cuadran juntos con GetNet)
+  const fila = page.locator('tr', { hasText: 'CERA MATE' }).first();
+  const txt = await fila.textContent();
+  assert.match(txt, /OK/);
+  assert.match(txt, /2 ventas/);
   assert.deepEqual(errores, []);
   await page.close();
 });

@@ -73,6 +73,16 @@ function propRecalcular(keep){
 function propDraftTotal(d){return d.lineas.reduce((s,l)=>s+Number(l.monto||0)+(l.tipo==='servicio'?Number(l.propina||0):0),0);}
 
 // Revisa si el código GetNet elegido cuadra con todo lo que lo usa (otras propuestas pendientes del mismo día)
+// true = cuadra, false = no cuadra o no está en GetNet, null = no aplica (no es tarjeta)
+function propCuadra(p,d){
+  if(d.forma!=='TK') return null;
+  if(!d.cod) return false;
+  const c=propCod(d.cod);
+  const g=(propState.disp[p.fecha]||[]).find(x=>propCod(x.cod)===c);
+  if(!g) return false;
+  const otros=propState.props.filter(q=>q.id!==p.id&&q.estado==='pendiente'&&q.fecha===p.fecha&&propState.drafts[q.id]?.forma==='TK'&&propCod(propState.drafts[q.id]?.cod)===c);
+  return propDraftTotal(d)+otros.reduce((s,q)=>s+propDraftTotal(propState.drafts[q.id]),0)===g.trans;
+}
 function propCheckCod(p,d){
   if(d.forma!=='TK') return '';
   if(!d.cod) return `<span style="color:var(--amber)">⚠ Sin código de autorización: no se podrá conciliar con GetNet</span>`;
@@ -200,7 +210,8 @@ function propCardPendiente(p){
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:12px">
       <div style="flex:1">Total: <b>${fmtCLP(propDraftTotal(d))}</b> ${propCheckCod(p,d)?' · '+propCheckCod(p,d):''}
         ${d.editado?`<div style="margin-top:4px;color:#64748B"><span id="propGuardado_${p.id}">${p.borrador?'✎ Cambios guardados':'✎ Guardando…'}</span> · <a href="#" onclick="window._bridge.propVolverSugerencia('${p.id}');return false">volver a la sugerencia</a></div>`:''}</div>
-      <button class="btn btn-success btn-sm" onclick="window._bridge.propAceptar('${p.id}')">✓ Aceptar</button>
+      ${d.confirmar?`<span style="color:var(--red);font-weight:600">⚠ Ojo: ${propEsc(d.confirmar)}.</span>`:''}
+      <button class="btn ${d.confirmar?'btn-danger':'btn-success'} btn-sm" onclick="window._bridge.propAceptar('${p.id}')">${d.confirmar?'Confirmar de todas formas':'✓ Aceptar'}</button>
       <select class="btn btn-ghost btn-sm" onchange="if(this.value)window._bridge.propDescartar('${p.id}',this.value)">
         <option value="">Descartar…</option>
         <option value="No vino">No vino</option>
@@ -274,7 +285,7 @@ function propRecalc(){ propRecalcular(false); renderPropuestas(); toast('Sugeren
 const propTimers={};
 function propMarcar(id){
   const d=propState.drafts[id]; if(!d) return;
-  d.editado=true;
+  d.editado=true; d.confirmar=null;
   clearTimeout(propTimers[id]);
   propTimers[id]=setTimeout(()=>propGuardarBorrador(id),700);
 }
@@ -306,6 +317,16 @@ async function propAceptar(id){
     if(l.tipo==='servicio'&&!l.servicio_id) return toast('Falta elegir el servicio en una línea','error');
     if(l.tipo==='PRODUCTO'&&!l.producto_id) return toast('Falta elegir el producto en una línea','error');
     if(!(Number(l.monto)>0)) return toast('Hay una línea con monto 0','error');
+  }
+  // Pedir una segunda confirmación si la sugerencia era dudosa y nadie la revisó, o si el pago no cuadra con GetNet
+  const s=propState.sugs[id]||{};
+  const motivos=[];
+  if(s.conf==='baja'&&!d.editado) motivos.push('la sugerencia tiene confianza baja y no se ha revisado');
+  if(propCuadra(p,d)===false) motivos.push('el código no cuadra con GetNet');
+  if(motivos.length&&!d.confirmar){
+    d.confirmar=motivos.join(' y ');
+    renderPropuestas();
+    return toast('Revisa la tarjeta: '+d.confirmar+'. Si está bien, pulsa "Confirmar de todas formas".','error');
   }
   showOverlay();
   try{
