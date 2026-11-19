@@ -4667,7 +4667,7 @@ function propParseAgenda(aoa){
   let h=-1;
   for(let i=0;i<Math.min(aoa.length,25);i++){
     const r=(aoa[i]||[]).map(propNorm);
-    if(r.some(c=>c.includes('cliente')) && r.some(c=>c.includes('servicio'))){ h=i; break; }
+    if(r.some(c=>c.includes('cliente')||c==='nombre') && r.some(c=>c.includes('servicio'))){ h=i; break; }
   }
   if(h<0) throw new Error('No encontré los encabezados del reporte (Cliente / Servicio). ¿Es el reporte de reservas de AgendaPro?');
   const hdr=aoa[h].map(propNorm);
@@ -4969,7 +4969,7 @@ async function loadPropuestas(){
 
 // Calcula sugerencias y borradores (keep=true conserva lo que el barbero ya editó)
 function propRecalcular(keep){
-  if(!keep) propState.drafts={};
+  if(!keep){ for(const k of Object.keys(propState.drafts)) if(!propState.drafts[k].editado) delete propState.drafts[k]; }
   propState.sugs={}; propState.disp={};
   const pend=propState.props.filter(p=>p.estado==='pendiente');
   const fechas=[...new Set(pend.map(p=>p.fecha))];
@@ -4982,6 +4982,12 @@ function propRecalcular(keep){
   }
   for(const p of pend){
     if(propState.drafts[p.id]) continue;
+    const bo=p.borrador;
+    if(bo&&Array.isArray(bo.lineas)&&bo.lineas.length){
+      propState.drafts[p.id]={forma:bo.forma||'',cod:bo.cod||'',codOtro:!!bo.codOtro,boleta:bo.boleta||'',nota:bo.nota||'',
+        lineas:bo.lineas.map(l=>({...l})),editado:true};
+      continue;
+    }
     const s=propState.sugs[p.id]||{forma:'',cod:'',precio:0,propina:0};
     const b=propMapBarbero(p.barbero_nombre||'',barberos);
     let servicio_id='';
@@ -5045,7 +5051,7 @@ function renderPropuestas(){
         <option value="descartada" ${st.estado==='descartada'?'selected':''}>Descartadas (${cuenta('descartada')})</option>
         <option value="registrada" ${st.estado==='registrada'?'selected':''}>Ya estaban registradas (${cuenta('registrada')})</option>
       </select>
-      ${st.estado==='pendiente'?`<button class="btn btn-ghost btn-sm" onclick="window._bridge.propRecalc()" title="Vuelve a calcular las sugerencias y descarta tus cambios sin aceptar">↺ Recalcular sugerencias</button>`:''}
+      ${st.estado==='pendiente'?`<button class="btn btn-ghost btn-sm" onclick="window._bridge.propRecalc()" title="Vuelve a calcular las sugerencias de las tarjetas que nadie ha editado">↺ Recalcular sugerencias</button>`:''}
       <span style="margin-left:auto;font-size:12px;color:#64748B">${lista.length} propuesta${lista.length===1?'':'s'}</span>
     </div>
   </div>`;
@@ -5124,7 +5130,8 @@ function propCardPendiente(p){
       <input type="text" value="${propEsc(d.nota)}" placeholder="Comentario (opcional)" style="flex:1;min-width:140px" onchange="window._bridge.propSet('${p.id}','nota',this.value)">
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:12px">
-      <div style="flex:1">Total: <b>${fmtCLP(propDraftTotal(d))}</b> ${propCheckCod(p,d)?' · '+propCheckCod(p,d):''}</div>
+      <div style="flex:1">Total: <b>${fmtCLP(propDraftTotal(d))}</b> ${propCheckCod(p,d)?' · '+propCheckCod(p,d):''}
+        ${d.editado?`<div style="margin-top:4px;color:#64748B"><span id="propGuardado_${p.id}">${p.borrador?'✎ Cambios guardados':'✎ Guardando…'}</span> · <a href="#" onclick="window._bridge.propVolverSugerencia('${p.id}');return false">volver a la sugerencia</a></div>`:''}</div>
       <button class="btn btn-success btn-sm" onclick="window._bridge.propAceptar('${p.id}')">✓ Aceptar</button>
       <select class="btn btn-ghost btn-sm" onchange="if(this.value)window._bridge.propDescartar('${p.id}',this.value)">
         <option value="">Descartar…</option>
@@ -5162,6 +5169,7 @@ function propSet(id,campo,valor){
     if(valor!=='TK'){ d.codOtro=false; if(propState.disp[propState.props.find(p=>p.id===id)?.fecha]?.some(g=>propCod(g.cod)===propCod(d.cod))) d.cod=''; }
   }
   else d[campo]=valor;
+  propMarcar(id);
   // Al elegir un código GetNet, proponer propina si la propuesta no comparte el pago
   if(campo==='cod'&&valor&&valor!=='__otro'){
     const p=propState.props.find(x=>x.id===id);
@@ -5179,6 +5187,7 @@ function propLinea(id,i,campo,valor){
   else if(campo==='qty'){ l.qty=Math.max(1,Number(valor)||1); const pr=productos.find(x=>x.id===l.producto_id); if(pr) l.monto=pr.precio*l.qty; }
   else if(campo==='monto'||campo==='propina'){ l[campo]=Math.max(0,Number(valor)||0); }
   else l[campo]=valor;
+  propMarcar(id);
   renderPropuestas();
 }
 function propAddLinea(id,tipo){
@@ -5186,13 +5195,40 @@ function propAddLinea(id,tipo){
   const base=d.lineas[0]?.barbero_id||'';
   if(tipo==='PRODUCTO') d.lineas.push({tipo:'PRODUCTO',barbero_id:base,producto_id:'',qty:1,monto:0});
   else d.lineas.push({tipo:'servicio',barbero_id:'',servicio_id:'',monto:0,propina:0});
+  propMarcar(id);
   renderPropuestas();
 }
-function propDelLinea(id,i){ const d=propState.drafts[id]; if(d&&d.lineas.length>1){ d.lineas.splice(i,1); renderPropuestas(); } }
+function propDelLinea(id,i){ const d=propState.drafts[id]; if(d&&d.lineas.length>1){ d.lineas.splice(i,1); propMarcar(id); renderPropuestas(); } }
 function propFiltro(k,v){ propState[k]=v; renderPropuestas(); }
-function propRecalc(){ propRecalcular(false); renderPropuestas(); toast('Sugerencias recalculadas','info'); }
+function propRecalc(){ propRecalcular(false); renderPropuestas(); toast('Sugerencias recalculadas (las tarjetas que alguien editó se mantienen)','info'); }
+
+// ---- Borradores: se guardan solos en la base para no perder cambios al recargar o cambiar de equipo ----
+const propTimers={};
+function propMarcar(id){
+  const d=propState.drafts[id]; if(!d) return;
+  d.editado=true;
+  clearTimeout(propTimers[id]);
+  propTimers[id]=setTimeout(()=>propGuardarBorrador(id),700);
+}
+async function propGuardarBorrador(id){
+  const d=propState.drafts[id]; if(!d) return;
+  const borrador={forma:d.forma,cod:d.cod,codOtro:d.codOtro,boleta:d.boleta,nota:d.nota,lineas:d.lineas};
+  const {error}=await sb.from('propuestas_venta').update({borrador}).eq('id',id).eq('estado','pendiente');
+  if(error){ toast('No se pudo guardar el borrador: '+error.message,'error'); return; }
+  const p=propState.props.find(x=>x.id===id); if(p) p.borrador=borrador;
+  const el=document.getElementById('propGuardado_'+id); if(el) el.textContent='✎ Cambios guardados';
+}
+async function propVolverSugerencia(id){
+  clearTimeout(propTimers[id]);
+  const {error}=await sb.from('propuestas_venta').update({borrador:null}).eq('id',id);
+  if(error) return toast('Error: '+error.message,'error');
+  const p=propState.props.find(x=>x.id===id); if(p) p.borrador=null;
+  delete propState.drafts[id];
+  propRecalcular(true); renderPropuestas();
+}
 
 async function propAceptar(id){
+  clearTimeout(propTimers[id]);
   const p=propState.props.find(x=>x.id===id), d=propState.drafts[id];
   if(!p||!d) return;
   if(!['EF','TK','TRF','MP'].includes(d.forma)) return toast('Elige la forma de pago','error');
@@ -5228,7 +5264,7 @@ async function propAceptar(id){
       const {data:pr}=await sb.from('productos').select('stock').eq('id',l.producto_id).single();
       if(pr) await sb.from('productos').update({stock:Math.max(0,(pr.stock||0)-(Number(l.qty)||1))}).eq('id',l.producto_id);
     }
-    const {error:e2}=await sb.from('propuestas_venta').update({estado:'aceptada',venta_ids:ins.map(x=>x.id),resuelta_en:new Date().toISOString(),nota:d.nota||null,detalle}).eq('id',id);
+    const {error:e2}=await sb.from('propuestas_venta').update({estado:'aceptada',venta_ids:ins.map(x=>x.id),resuelta_en:new Date().toISOString(),nota:d.nota||null,detalle,borrador:null}).eq('id',id);
     if(e2) throw new Error('La venta se creó, pero no se pudo marcar la propuesta: '+e2.message);
     const pr=propState.props.find(x=>x.id===id); Object.assign(pr,{estado:'aceptada',venta_ids:ins.map(x=>x.id),detalle,nota:d.nota||null});
     delete propState.drafts[id];
@@ -5242,8 +5278,9 @@ async function propAceptar(id){
 }
 
 async function propDescartar(id,motivo){
+  clearTimeout(propTimers[id]);
   const estado=motivo==='Ya estaba registrada'?'registrada':'descartada';
-  const {error}=await sb.from('propuestas_venta').update({estado,nota:motivo,resuelta_en:new Date().toISOString()}).eq('id',id).eq('estado','pendiente');
+  const {error}=await sb.from('propuestas_venta').update({estado,nota:motivo,resuelta_en:new Date().toISOString(),borrador:null}).eq('id',id).eq('estado','pendiente');
   if(error) return toast('Error: '+error.message,'error');
   const p=propState.props.find(x=>x.id===id); if(p){p.estado=estado;p.nota=motivo;}
   delete propState.drafts[id];
@@ -5337,6 +5374,7 @@ window._bridge.propDescartar=propDescartar;
 window._bridge.propReabrir=propReabrir;
 window._bridge.propDeshacer=propDeshacer;
 window._bridge.propCrearDesdePago=propCrearDesdePago;
+window._bridge.propVolverSugerencia=propVolverSugerencia;
 window._bridge.loadPropuestas=loadPropuestas;
 
 
