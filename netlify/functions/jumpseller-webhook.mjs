@@ -27,9 +27,23 @@ function mapFormaPago(paymentMethod = "") {
   return "EF";
 }
 
+// El servidor corre en UTC: calcular año/mes/día/día de semana en hora de Chile,
+// si no los pedidos pagados después de las 21:00 quedan con la fecha del día siguiente.
+function fechaChile(date) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Santiago",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(date).map((p) => [p.type, p.value])
+  );
+  const anio = Number(parts.year), mes = Number(parts.month), dia = Number(parts.day);
+  // Día de la semana a partir de la fecha local (mediodía UTC evita bordes)
+  const diaSemana = new Date(Date.UTC(anio, mes - 1, dia, 12)).getUTCDay();
+  return { anio, mes, dia, diaSemana, iso: `${parts.year}-${parts.month}-${parts.day}` };
+}
+
 function buildVenta(order, barberoId, barberoNombre) {
-  const fecha = new Date(order.completed_at || order.created_at);
-  const fechaStr = fecha.toISOString().split("T")[0]; // YYYY-MM-DD
+  const f = fechaChile(new Date(order.completed_at || order.created_at));
 
   const formaPago = mapFormaPago(order.payment_method_name || "");
   const monto = Math.round(Number(order.total) || 0);
@@ -52,12 +66,12 @@ function buildVenta(order, barberoId, barberoNombre) {
     barbero_nombre: barberoNombre,
     cod_autorizacion: String(order.id),
     boleta: order.invoice_number ? String(order.invoice_number) : null,
-    anio: fecha.getFullYear(),
-    n_mes: fecha.getMonth() + 1,
-    mes: MESES[fecha.getMonth()],
-    dia: fecha.getDate(),
-    dia_semana: DIAS_ES[fecha.getDay()],
-    fecha: fechaStr,
+    anio: f.anio,
+    n_mes: f.mes,
+    mes: MESES[f.mes - 1],
+    dia: f.dia,
+    dia_semana: DIAS_ES[f.diaSemana],
+    fecha: f.iso,
     tipo: "PRODUCTO",
     cliente,
     servicio_producto: items || "Venta web",

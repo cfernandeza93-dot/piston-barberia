@@ -134,10 +134,12 @@ tr:hover td{background:#F8FAFC}
   <div class="topbar">
     <div>
       <div class="topbar-title">✂ PÍSTON BARBERÍA</div>
-      <div class="topbar-subtitle">Sistema de Gestión · v1abr-b</div>
+      <div class="topbar-subtitle">Sistema de Gestión</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <span id="topbarDate" style="font-size:11px;color:#94A3B8"></span>
+      <button onclick="descargarRespaldo()" title="Descargar una copia de todos los datos" style="padding:5px 10px;background:transparent;color:#CBD5E1;border:1px solid #475569;border-radius:6px;font-size:11px;cursor:pointer">💾 Respaldo</button>
+      <button onclick="logout()" title="Cerrar sesión en este equipo" style="padding:5px 10px;background:transparent;color:#CBD5E1;border:1px solid #475569;border-radius:6px;font-size:11px;cursor:pointer">Salir</button>
     </div>
   </div>
   <div class="tabs" id="tabBar">
@@ -160,7 +162,7 @@ tr:hover td{background:#F8FAFC}
 <!-- BRIDGE -->
 <script>
 window._bridge = {};
-['checkPw','go','dshTab','loadDashboard','loadVenta','loadHistorial','loadInventario','loadGastos','loadConciliacion','loadEquipo','loadImportar','loadArqueo','loadAnalisis','loadLiquidacion','loadGiftCards',
+['checkPw','logout','descargarRespaldo','go','dshTab','loadDashboard','loadVenta','loadHistorial','loadInventario','loadGastos','loadConciliacion','loadEquipo','loadImportar','loadArqueo','loadAnalisis','loadLiquidacion','loadGiftCards',
  'submitVenta','addCartItem','removeCartItem','clearCart',
  'filtrarProductos','seleccionarProducto','limpiarSeleccionProducto',
  'filterHistorial','deleteVenta','startEditVenta','saveEditVenta','cancelEditVenta','exportHistorialCSV',
@@ -186,7 +188,9 @@ const SB_URL = 'https://ssirnhqtmjxuuuwyilmp.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzaXJuaHF0bWp4dXV1d3lpbG1wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5OTc5MTYsImV4cCI6MjA4OTU3MzkxNn0.4CS47Dk7B5cgTiJdLctKxuqXuDvPvnwLfg9RODu4FN8';
 const sb = createClient(SB_URL, SB_KEY);
 
-const PW = 'piston2026';
+// Usuario único de la barbería en Supabase Auth. La contraseña NO está en el código:
+// se valida en Supabase. Para cambiarla: Supabase > Authentication > Users.
+const LOGIN_EMAIL = 'equipo@pistonbarberia.cl';
 let MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 let DIAS_ES = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 let currentTab = 'dashboard';
@@ -206,7 +210,10 @@ function toast(msg,type='success'){
 }
 function fmt(n){return Number(n||0).toLocaleString('es-CL')}
 function fmtCLP(n){return '$'+fmt(n)}
-function today(){return new Date().toISOString().split('T')[0]}
+// Fecha local (Chile) en formato YYYY-MM-DD. No usar toISOString(): trabaja en UTC
+// y después de las 21:00 en Chile devuelve la fecha del día siguiente.
+function localISODate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function today(){return localISODate(new Date())}
 function pad(n){return String(n).padStart(2,'0')}
 
 async function loadCatalogos(){
@@ -219,17 +226,73 @@ async function loadCatalogos(){
 }
 
 // ============ LOGIN ============
-function checkPw(){
+function enterApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  const d=new Date();
+  document.getElementById('topbarDate').textContent=d.toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  go('dashboard');
+}
+let loggingIn=false;
+async function checkPw(){
+  if(loggingIn) return;
   const v=document.getElementById('pwInput').value;
-  if(v===PW){
-    document.getElementById('loginScreen').style.display='none';
-    document.getElementById('app').style.display='flex';
-    const d=new Date();
-    document.getElementById('topbarDate').textContent=d.toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-    go('dashboard');
-  } else {
-    document.getElementById('loginErr').textContent='Contraseña incorrecta';
+  const err=document.getElementById('loginErr');
+  const btn=document.querySelector('#loginScreen button');
+  err.textContent='';
+  if(!v){err.textContent='Ingresa la contraseña';return;}
+  loggingIn=true; if(btn){btn.disabled=true;btn.textContent='Ingresando...';}
+  try{
+    const {error}=await sb.auth.signInWithPassword({email:LOGIN_EMAIL,password:v});
+    if(error){
+      err.textContent = /invalid/i.test(error.message) ? 'Contraseña incorrecta' : 'No se pudo conectar. Revisa internet e intenta de nuevo.';
+    } else {
+      document.getElementById('pwInput').value='';
+      enterApp();
+    }
+  } finally {
+    loggingIn=false; if(btn){btn.disabled=false;btn.textContent='Ingresar';}
   }
+}
+async function logout(){
+  await sb.auth.signOut();
+  location.reload();
+}
+// Si este equipo ya inició sesión antes, entrar directo (la sesión se recuerda en el navegador)
+sb.auth.getSession().then(({data})=>{ if(data?.session) enterApp(); });
+// Si la sesión se pierde (p. ej. se cambió la contraseña), volver a la pantalla de login
+sb.auth.onAuthStateChange((event, session)=>{
+  if(event==='SIGNED_OUT' && document.getElementById('app').style.display==='flex') location.reload();
+});
+
+// ============ RESPALDO ============
+// Descarga una copia completa de todas las tablas en un archivo .json
+const TABLAS_RESPALDO=['ventas','gastos','barberos','servicios','productos','getnet_transacciones','adelantos_santander','caja_saldo_inicial','gift_cards','horarios_barbero','bloqueos_barbero','citas'];
+async function descargarRespaldo(){
+  showOverlay();
+  try{
+    const out={generado:new Date().toISOString(),tablas:{}};
+    for(const t of TABLAS_RESPALDO){
+      const filas=[];
+      for(let desde=0;;desde+=1000){
+        const {data,error}=await sb.from(t).select('*').range(desde,desde+999);
+        if(error) throw new Error(`${t}: ${error.message}`);
+        filas.push(...data);
+        if(data.length<1000) break;
+      }
+      out.tablas[t]=filas;
+    }
+    const blob=new Blob([JSON.stringify(out)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`respaldo_piston_${today()}.json`;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+    const total=Object.values(out.tablas).reduce((s,x)=>s+x.length,0);
+    toast(`Respaldo descargado (${fmt(total)} registros)`);
+  }catch(e){
+    toast('Error al generar respaldo: '+e.message,'error');
+  }finally{hideOverlay();}
 }
 
 // ============ TABS ============
@@ -3230,7 +3293,7 @@ function renderGiftCards(){
 
   // Default vencimiento 6 meses
   const def=new Date(); def.setMonth(def.getMonth()+6);
-  document.getElementById('gcVencimiento').value = def.toISOString().split('T')[0];
+  document.getElementById('gcVencimiento').value = localISODate(def);
 
   setTimeout(gcPreview, 80);
 
@@ -4536,6 +4599,8 @@ window._bridge.gcDescargarPDF=gcDescargarPDF;
 window._bridge.gcCanjear=gcCanjear;
 window._bridge.gcDeleteCard=gcDeleteCard;
 window._bridge.dshTab=()=>{};
+window._bridge.logout=logout;
+window._bridge.descargarRespaldo=descargarRespaldo;
 
 </script>
 </body>
