@@ -163,3 +163,40 @@ test('Propuestas: importa el reporte de AgendaPro, sugiere y acepta', async () =
   assert.deepEqual(errores, []);
   await page.close();
 });
+
+test('Análisis: clientes en riesgo, retención, ocupación, margen y totales', async () => {
+  const { page, errores } = await abrir();
+  await page.click('.tab-btn:has-text("Análisis")');
+  await page.waitForSelector('#anContenido .metric');
+  let txt = await page.textContent('#anContenido');
+  assert.match(txt, /En riesgo/);
+  assert.match(txt, /Cliente Fiel Riesgo/, 'el cliente que venía cada 14 días y no volvió debe estar en riesgo');
+  assert.match(txt, /Cliente Nuevo/, 'el que vino una vez hace 45 días debe aparecer');
+  assert.ok(!/Cliente Activo/.test(txt.split('Vinieron una vez')[0]), 'el cliente activo no está en riesgo');
+  assert.ok(await page.locator('#anContenido a[href^="https://wa.me/56911112222"]').count() >= 1, 'link de WhatsApp');
+
+  await page.click('button:has-text("Retención")');
+  await page.waitForSelector('#anContenido >> text=Retención por barbero');
+  txt = await page.textContent('#anContenido');
+  assert.match(txt, /Volvieron en 60 días/);
+
+  await page.click('button:has-text("Ocupación")');
+  await page.waitForSelector('#anContenido >> text=Ocupación por día y hora');
+  assert.ok(await page.locator('#anContenido table td:has-text("%")').count() > 0);
+
+  await page.click('button:has-text("Margen real")');
+  await page.waitForSelector('#anContenido >> text=Margen bruto');
+  await page.selectOption('#anContenido select >> nth=0', '2026');
+  await page.waitForTimeout(300);
+  await page.selectOption('#anContenido select >> nth=1', '11');
+  await page.waitForSelector('#anContenido >> text=Por servicio');
+  txt = await page.textContent('#anContenido');
+  assert.match(txt, /Corte de Cabello/);
+  assert.match(txt, /Insumos/, 'gastos sin adelantos');
+
+  await page.click('button:has-text("Totales")');
+  await page.waitForTimeout(800);
+  assert.match(await page.textContent('#anContenido'), /Análisis/);
+  assert.deepEqual(errores, []);
+  await page.close();
+});

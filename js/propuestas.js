@@ -1,6 +1,7 @@
 // Pestaña Propuestas (ventas sugeridas desde AgendaPro)
 import { DIAS_ES, MESES, barberos, fmtCLP, getXLSX, hideOverlay, loadCatalogos, localISODate, productos, sb, servicios, showOverlay, toast } from './core.js';
 import { propClave, propCod, propDetectarRegistradas, propMapBarbero, propNorm, propParseAgenda, propServicio, propSugerirDia } from './propuestas_logic.js';
+import { guardarAgendaCitas, olvidarAgendaCitas } from './agenda.js';
 
 // ============ PROPUESTAS: PANTALLA ============
 let propState={barbero:'',estado:'pendiente',props:[],gn:[],ventas:[],drafts:{},sugs:{},disp:{},cargado:false};
@@ -391,6 +392,8 @@ async function propImport(input){
     const ws=wb.Sheets[wb.SheetNames[0]];
     const aoa=XL.utils.sheet_to_json(ws,{header:1,raw:true,defval:''});
     const {citas,omitidas}=propParseAgenda(aoa);
+    // El mismo reporte alimenta el Análisis (clientes y ocupación); si falla, no detiene las propuestas
+    try{ await guardarAgendaCitas(aoa,file.name); olvidarAgendaCitas(); }catch(e){ console.warn('agenda_citas',e); }
     if(!citas.length) throw new Error('El reporte no tiene citas con estado "Asiste"');
     await loadCatalogos();
     const filas=citas.map(c=>{

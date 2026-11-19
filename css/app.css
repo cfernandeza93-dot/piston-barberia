@@ -104,3 +104,5 @@ tr:hover td{background:#F8FAFC}
 /* PROPUESTAS */
 .prop-card input,.prop-card select{padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;color:var(--text)}
 .prop-card input:focus,.prop-card select:focus{outline:none;border-color:var(--blue)}
+/* ANÁLISIS */
+#anContenido select,#mainContent .card select.an{padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;color:var(--text)}

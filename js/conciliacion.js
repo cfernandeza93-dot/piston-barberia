@@ -135,6 +135,8 @@ async function processConcilFile(input){
       propina:          Number(getGN(r,'PROPINA')||0),
       valor_venta:      Number(getGN(r,'VALOR VENTA','VALORVENTA')||0),
       valor_transaccion:Number(getGN(r,'VALOR TRANSACCION','VALORTRANSACCION','VALOR TRANSACCIÓN')||0),
+      comision:         getGN(r,'COMISION','COMISIÓN')!==''?Number(getGN(r,'COMISION','COMISIÓN')):null,
+      comision_propina: getGN(r,'COMISION PROPINA','COMISIÓN PROPINA')!==''?Number(getGN(r,'COMISION PROPINA','COMISIÓN PROPINA')):null,
       estado:           getGN(r,'ESTADO TRANSACCION','ESTADOTRANSACCION','ESTADO TRANSACCIÓN')||null,
       archivo_origen:   file.name,
     })).filter(r=>r.cod_aut&&r.cod_aut!=='-');

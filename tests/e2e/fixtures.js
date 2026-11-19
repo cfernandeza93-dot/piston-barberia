@@ -65,4 +65,18 @@ export const seed = {
   caja_saldo_inicial: [{ id: 'c1', anio: 2026, mes: 11, monto: 50000, notas: null, updated_at: '2026-11-01T12:00:00Z', saldo_final_real: null, notas_final: null }],
   adelantos_santander: [{ id: 'a1', barbero_nombre: 'SAMUEL LEON', monto: 40000, mes: 11, anio: 2026, descripcion: null, fecha: '2026-11-12', created_at: '2026-11-12T12:00:00Z' }],
   gift_cards: [], propuestas_venta: [], horarios_barbero: [], bloqueos_barbero: [], citas: [],
+  agenda_citas: agendaRelativa(),
 };
+
+// Citas de AgendaPro con fechas relativas a hoy, para que el Análisis dé lo mismo cualquier día que se corra la prueba.
+function agendaRelativa() {
+  const f = n => { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const c = (n, cliente, telefono, prestador, hora = '10:00', estado = 'Asiste') => ({ fecha: f(n), hora, cliente, telefono, email: '', servicio: 'Corte de Cabello', precio: 16000, prestador, estado, pagada: false, origen: 'Online' });
+  return [
+    ...[200, 186, 172, 158, 144, 130, 116, 102, 88, 74, 60].map(n => c(n, 'Cliente Fiel Riesgo', '+56911112222', 'Samuel Leon')),
+    ...[90, 60, 30, 3].map(n => c(n, 'Cliente Activo', '922223333', 'Hugo Jaramillo', '18:00')),
+    c(45, 'Cliente Nuevo', '933334444', 'Mailin Chaparro', '12:00'),
+    ...[150, 140].map(n => c(n, 'Vuelve Rapido', '944445555', 'Mailin Chaparro', '17:20')),
+    c(2, 'No Vino', '955556666', 'Hugo Jaramillo', '11:00', 'No Asiste'),
+  ];
+}
