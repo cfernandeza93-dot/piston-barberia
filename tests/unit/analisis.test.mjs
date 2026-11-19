@@ -96,6 +96,8 @@ test('margen real: descuenta comisión del barbero, de GetNet y costo de product
   assert.ok(m.comisionEstimada);
   assert.equal(m.totalGastos, 10000, 'los adelantos no son gasto: ya están en la comisión');
   assert.equal(m.utilidad, m.total.margen - 10000);
+  const m2 = A.anMargen([...ventas, { ...ventas[0], servicio_producto: 'corte de  cabello', cod_autorizacion: null, forma_pago: 'EF' }], getnet, servicios, productos);
+  assert.equal(m2.porServicio.find(x => x.clave === 'Corte de Cabello').cantidad, 3, 'agrupa el mismo servicio escrito distinto');
 });
 
 test('lee el reporte completo de AgendaPro con teléfono, origen y estado', () => {

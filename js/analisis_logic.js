@@ -210,6 +210,8 @@ function anMargen(ventas, getnet, servicios, productos, gastos = [], { comisionP
   const montoPorClave = {};
   const claveDe = v => String(v.cod_autorizacion || '').trim().replace(/^0+/, '') + '|' + String(v.fecha).slice(0, 10);
   for (const v of ventas) if (v.forma_pago === 'TK' && v.cod_autorizacion) montoPorClave[claveDe(v)] = (montoPorClave[claveDe(v)] || 0) + (v.monto || 0);
+  // mismo servicio escrito distinto ("corte de cabello" / "Corte de Cabello") se agrupa con el nombre del catálogo
+  const nombreServicio = n => { const k = propNorm(n); if (!k) return 'Sin servicio'; const s = servicios.find(x => propNorm(x.nombre) === k); return s ? s.nombre.trim() : String(n).trim(); };
   const pctServicio = nombre => { const s = servicios.find(x => propNorm(x.nombre) === propNorm(nombre)); return (s?.comision ?? 50) / 100; };
   const costoProducto = nombre => { const p = productos.find(x => propNorm(x.nombre) === propNorm(nombre)); return p && p.costo > 0 && p.precio > 0 ? p.costo / p.precio : null; };
 
@@ -241,7 +243,7 @@ function anMargen(ventas, getnet, servicios, productos, gastos = [], { comisionP
   for (const g of gastos) { if (/adelanto/i.test(g.categoria || '')) continue; gastosCat[g.categoria || 'Otros'] = (gastosCat[g.categoria || 'Otros'] || 0) + (g.monto || 0); }
   const totalGastos = Object.values(gastosCat).reduce((a, b) => a + b, 0);
   return {
-    porServicio: agrupar(f => (f.tipo === 'PRODUCTO' ? 'Productos' : propNorm(f.servicio_producto) ? f.servicio_producto.trim() : 'Sin servicio')),
+    porServicio: agrupar(f => f.tipo === 'PRODUCTO' ? 'Productos' : nombreServicio(f.servicio_producto)),
     porBarbero: agrupar(f => f.barbero_nombre || 'Sin barbero'),
     porFormaPago: agrupar(f => f.forma_pago || '—'),
     total, gastos: Object.entries(gastosCat).map(([categoria, monto]) => ({ categoria, monto })).sort((a, b) => b.monto - a.monto),
