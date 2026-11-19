@@ -1,0 +1,15 @@
+{
+  "name": "piston-barberia-tests",
+  "private": true,
+  "type": "module",
+  "description": "Pruebas automáticas de la plataforma Píston Barbería",
+  "scripts": {
+    "test": "node --test \"unit/*.test.mjs\" \"e2e/*.test.mjs\"",
+    "test:unit": "node --test \"unit/*.test.mjs\"",
+    "test:e2e": "node --test \"e2e/*.test.mjs\""
+  },
+  "devDependencies": {
+    "playwright": "1.65.1",
+    "xlsx": "0.18.5"
+  }
+}
