@@ -133,3 +133,16 @@ test('en un día sin promo no se sugiere el precio promo (caso 009403 del 16-nov
   assert.notEqual(s.cod, '009403', 'el pago de $14.000 no es un corte de lunes');
   assert.equal(s.precio, 16000);
 });
+
+test('un pago compartido no le quita el pago propio a una cita, ni puede ser anterior a ella (caso 19-nov)', () => {
+  const p = [
+    { id: 'rojas', fecha: '2026-11-19', hora: '12:00', cliente: 'Patricio Rojas', servicio_agenda: C, barbero_nombre: 'SAMUEL LEON', origen: 'agendapro' },
+    { id: 'gutierrez', fecha: '2026-11-19', hora: '14:40', cliente: 'Francisco Gutierrez', servicio_agenda: PB, barbero_nombre: 'SAMUEL LEON', origen: 'agendapro' },
+  ];
+  const g = [['005570', '12:09:10', 16000], ['007042', '12:58:01', 30000], ['950386', '15:22:57', 14000]]
+    .map(([cod, hora, v]) => ({ cod_aut: cod, fecha_venta: '2026-11-19', hora_venta: hora, valor_venta: v, propina: 0, valor_transaccion: v }));
+  const { sug } = L.propSugerirDia(p, g, [], servicios);
+  assert.equal(sug.rojas.cod, '005570');
+  assert.equal(sug.gutierrez.cod, '950386');
+  assert.equal(sug.gutierrez.conf, 'alta');
+});

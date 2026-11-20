@@ -243,7 +243,34 @@ function propSugerirDia(props, gnDia, ventasDia, servicios){
   });
   resto=resto.filter(p=>!sug[p.id]);
 
-  // 3. Un pago, dos servicios de barberos distintos (el monto no calza con ningún servicio solo)
+  // Con la hora de GetNet, emparejar cita-pago por cercanía. Se hace en dos vueltas: primero solo los que calzan bien
+  // (para que un pago compartido no le "robe" el pago a una cita que tiene uno propio a la hora justa), después el resto.
+  const conHora=resto.length && resto.every(p=>p.hora) && libres.length && libres.every(g=>g.hora);
+  const porHora=(maxCosto)=>{
+    const dow=resto[0]?propDiaSemana(resto[0].fecha):0, promoDia=dow===2||dow===3;
+    const pares=[];
+    for(const p of resto){ if(sug[p.id]) continue; const precios=preciosDe(p);
+      for(const g of libres){ if(!precios.includes(g.venta)) continue;
+        const c=propCostoHora(p.hora,g.hora)+(g.venta===precios[0]||promoDia?0:15);
+        pares.push({p,g,c}); } }
+    pares.sort((a,b)=>a.c-b.c);
+    const tomadas=new Set(), usados=new Set();
+    for(const x of pares){
+      if(x.c>maxCosto||tomadas.has(x.p.id)||usados.has(x.g)) continue;
+      // ¿hay otro pago libre casi igual de cercano para esta cita? -> menos seguro
+      const alt=pares.filter(y=>y.p===x.p&&y.g!==x.g&&!usados.has(y.g)).map(y=>y.c);
+      const segundo=alt.length?Math.min(...alt):Infinity;
+      const conf=x.c<=35&&segundo-x.c>=15?'alta':(x.c<=90?'media':'baja');
+      const motivo=`Pago GetNet a las ${x.g.hora} (cita ${x.p.hora})`+(conf==='alta'?'':conf==='media'?' — hay otro pago parecido cerca, revisa':' — hora poco calzada, revisa');
+      tomadas.add(x.p.id); usados.add(x.g);
+      asignar([x.p],x.g,motivo,conf);
+    }
+    resto=resto.filter(p=>!sug[p.id]);
+  };
+  if(conHora) porHora(90);
+
+  // 3. Un pago, dos servicios (el monto no calza con ningún servicio solo).
+  // Con hora: el pago no puede ser anterior a ninguna de las dos citas.
   for(const g of [...libres]){
     if(resto.some(p=>preciosDe(p).includes(g.venta))) continue;
     let mejor=null;
@@ -251,13 +278,14 @@ function propSugerirDia(props, gnDia, ventasDia, servicios){
       const a=resto[i], b=resto[j];
       if(sug[a.id]||sug[b.id]) continue;
       if(!propCombo([a,b],g.venta,preciosDe)) continue;
-      const ch=propCostoGrupo([a,b],g);
-      const dist=ch!==null?ch:Math.abs(propMin(a.hora)-propMin(b.hora));
+      const ca=propCostoHora(a.hora,g.hora), cb=propCostoHora(b.hora,g.hora);
+      if(ca!==null&&cb!==null&&(ca>=1000||cb>=1000)) continue;
+      const dist=ca!==null&&cb!==null?Math.max(ca,cb):Math.abs(propMin(a.hora)-propMin(b.hora));
       if(!mejor||dist<mejor.dist) mejor={a,b,dist};
     }
     if(mejor){
       const misma=propNorm(mejor.a.barbero_nombre)===propNorm(mejor.b.barbero_nombre);
-      asignar([mejor.a,mejor.b],g,`Un pago GetNet de ${g.venta} calza con estos 2 servicios${misma?'':' (barberos distintos)'} — confirmar`,'baja');
+      asignar([mejor.a,mejor.b],g,`Un pago GetNet de ${g.venta}${g.hora?' a las '+g.hora:''} calza con estos 2 servicios${misma?'':' (barberos distintos)'} — confirmar`,'baja');
     }
   }
   resto=resto.filter(p=>!sug[p.id]);
@@ -273,28 +301,7 @@ function propSugerirDia(props, gnDia, ventasDia, servicios){
     const iguales=pagos.every(x=>x.venta===g.venta&&x.prop===g.prop);
     return [iguales?'media':'baja', `${citas.length} cita${citas.length===1?'':'s'} y ${pagos.length} pago${pagos.length===1?'':'s'} GetNet de montos parecidos ese día — ${iguales?'son iguales, da lo mismo cuál':'confirma el código (cambian monto o propina)'}`];
   };
-  const conHora=resto.length && resto.every(p=>p.hora) && libres.length && libres.every(g=>g.hora);
-  if(conHora){
-    const dow=resto[0]?propDiaSemana(resto[0].fecha):0, promoDia=dow===2||dow===3;
-    const pares=[];
-    for(const p of resto){ const precios=preciosDe(p);
-      for(const g of libres){ if(!precios.includes(g.venta)) continue;
-        const c=propCostoHora(p.hora,g.hora)+(g.venta===precios[0]||promoDia?0:15);
-        pares.push({p,g,c}); } }
-    pares.sort((a,b)=>a.c-b.c);
-    const tomadas=new Set(), usados=new Set();
-    for(const x of pares){
-      if(tomadas.has(x.p.id)||usados.has(x.g)) continue;
-      // ¿hay otro pago libre casi igual de cercano para esta cita? -> menos seguro
-      const alt=pares.filter(y=>y.p===x.p&&y.g!==x.g&&!usados.has(y.g)).map(y=>y.c);
-      const segundo=alt.length?Math.min(...alt):Infinity;
-      const conf=x.c<=35&&segundo-x.c>=15?'alta':(x.c<=90?'media':'baja');
-      const motivo=`Pago GetNet a las ${x.g.hora} (cita ${x.p.hora})`+(conf==='alta'?'':conf==='media'?' — hay otro pago parecido cerca, revisa':' — hora poco calzada, revisa');
-      tomadas.add(x.p.id); usados.add(x.g);
-      asignar([x.p],x.g,motivo,conf);
-    }
-    resto=resto.filter(p=>!sug[p.id]);
-  }
+  if(conHora) porHora(Infinity);
   for(const pasada of [0,1]){
     for(const p of resto){
       if(sug[p.id]) continue;
