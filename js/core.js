@@ -42,7 +42,7 @@ async function loadCatalogos(){
 
 // ============ RESPALDO ============
 // Descarga una copia completa de todas las tablas en un archivo .json
-const TABLAS_RESPALDO=['ventas','gastos','barberos','servicios','productos','getnet_transacciones','adelantos_santander','caja_saldo_inicial','gift_cards','horarios_barbero','bloqueos_barbero','citas','propuestas_venta'];
+const TABLAS_RESPALDO=['ventas','gastos','barberos','servicios','productos','getnet_transacciones','adelantos_santander','caja_saldo_inicial','gift_cards','horarios_barbero','bloqueos_barbero','citas','propuestas_venta','agenda_citas','clientes_seguimiento'];
 async function descargarRespaldo(){
   showOverlay();
   try{

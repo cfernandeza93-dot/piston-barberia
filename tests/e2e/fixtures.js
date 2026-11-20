@@ -65,7 +65,7 @@ export const seed = {
   caja_saldo_inicial: [{ id: 'c1', anio: 2026, mes: 11, monto: 50000, notas: null, updated_at: '2026-11-01T12:00:00Z', saldo_final_real: null, notas_final: null }],
   adelantos_santander: [{ id: 'a1', barbero_nombre: 'SAMUEL LEON', monto: 40000, mes: 11, anio: 2026, descripcion: null, fecha: '2026-11-12', created_at: '2026-11-12T12:00:00Z' }],
   gift_cards: [], propuestas_venta: [], horarios_barbero: [], bloqueos_barbero: [], citas: [],
-  agenda_citas: agendaRelativa(),
+  agenda_citas: agendaRelativa(), clientes_seguimiento: [],
 };
 
 // Citas de AgendaPro con fechas relativas a hoy, para que el Análisis dé lo mismo cualquier día que se corra la prueba.

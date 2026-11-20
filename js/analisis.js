@@ -2,7 +2,7 @@
 // La sub-pestaña "Totales" es el análisis que existía antes (analisis_totales.js).
 import { MESES, fmtCLP, getXLSX, hideOverlay, loadCatalogos, localISODate, productos, sb, servicios, showOverlay, toast, today } from './core.js';
 import { anClientesEnRiesgo, anMargen, anOcupacion, anRetencion } from './analisis_logic.js';
-import { cargarAgendaCitas, guardarAgendaCitas, olvidarAgendaCitas } from './agenda.js';
+import { cargarAgendaCitas, guardarAgendaCitas, olvidarAgendaCitas, traerTodo } from './agenda.js';
 import { loadAnalisisTotales } from './analisis_totales.js';
 
 const anState = { vista: 'riesgo', barbero: '', semanas: 8, anio: new Date().getFullYear(), mes: new Date().getMonth() + 1, listaPerdidos: false };
@@ -11,15 +11,85 @@ const pct = (x, d = 0) => x == null ? '—' : (x * 100).toFixed(d) + '%';
 const fechaCorta = f => { const [y, m, d] = String(f).split('-'); return `${+d} ${MESES[+m - 1].slice(0, 3).toLowerCase()} ${y.slice(2)}`; };
 const VISTAS = [['riesgo', '👥 Clientes en riesgo'], ['retencion', '🔁 Retención'], ['ocupacion', '🕒 Ocupación'], ['margen', '💰 Margen real'], ['totales', '📊 Totales']];
 
-// WhatsApp con saludo listo (número chileno)
-function linkWsp(tel, nombre) {
+// WhatsApp con saludo listo (número chileno). Al pulsarlo queda registrado "contactado hoy".
+function linkWsp(tel, nombre, idx) {
   let d = String(tel || '').replace(/\D/g, '');
   if (d.length === 8) d = '569' + d; else if (d.length === 9 && d[0] === '9') d = '56' + d;
   if (d.length < 11) return esc(tel || '');
   const primer = String(nombre || '').trim().split(/\s+/)[0] || '';
   const txt = encodeURIComponent(`Hola ${primer.charAt(0).toUpperCase() + primer.slice(1).toLowerCase()}! Te escribimos de Píston Barbería 💈 Hace tiempo que no te vemos, ¿te agendamos tu próximo corte?`);
-  return `<a href="https://wa.me/${d}?text=${txt}" target="_blank" rel="noopener" title="Escribir por WhatsApp">💬 ${esc(tel)}</a>`;
+  const reg = idx === undefined ? '' : ` onclick="window._bridge.anContactado(${idx})"`;
+  return `<a href="https://wa.me/${d}?text=${txt}" target="_blank" rel="noopener" title="Escribir por WhatsApp (queda registrado como contactado hoy)"${reg}>💬 ${esc(tel)}</a>`;
 }
+
+// ---------- Seguimiento de clientes (comentarios, contactado, no contactar) ----------
+let anSeg = null;          // cliente_key -> fila de clientes_seguimiento
+let anCitas = [];          // citas cargadas (para volver a dibujar sin recargar)
+let anFilas = [];          // clientes de las listas dibujadas (los botones usan su posición)
+const SEG_ESTADOS = { contactado: 'Contactado', agendara: 'Va a agendar', no_contactar: 'No contactar' };
+const SEG_MOTIVOS = ['No quiere volver', 'Se cambió de ciudad', 'Número equivocado', 'Va a otra barbería', 'Otro'];
+async function cargarSeguimiento(forzar = false) {
+  if (anSeg && !forzar) return anSeg;
+  const filas = await traerTodo(() => sb.from('clientes_seguimiento').select('*').order('cliente_key'));
+  anSeg = Object.fromEntries(filas.map(f => [f.cliente_key, f]));
+  return anSeg;
+}
+const diasDesde = f => f ? Math.round((new Date(today() + 'T12:00:00') - new Date(String(f).slice(0, 10) + 'T12:00:00')) / 864e5) : null;
+function badgeSeg(seg) {
+  if (!seg) return '';
+  const d = diasDesde(seg.contactado_en);
+  const cuando = d === null ? '' : d === 0 ? ' hoy' : ` hace ${d} día${d === 1 ? '' : 's'}`;
+  if (seg.estado === 'no_contactar') return `<span class="badge badge-gray" title="${esc(seg.comentario || '')}">🚫 No contactar${seg.motivo ? ': ' + esc(seg.motivo) : ''}</span>`;
+  if (seg.estado === 'agendara') return `<span class="badge badge-green">📅 Va a agendar${cuando}</span>`;
+  if (seg.estado === 'contactado' || seg.contactado_en) return `<span class="badge badge-blue">💬 Contactado${cuando}</span>`;
+  return '';
+}
+function celdaSeg(x, idx) {
+  const seg = anSeg?.[x.key];
+  return `<td style="min-width:180px">${badgeSeg(seg)}${seg?.comentario ? `<div style="font-size:11px;color:#475569;margin-top:2px">${esc(seg.comentario)}</div>` : ''}
+    <button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:11px;margin-top:2px" onclick="window._bridge.anEditarSeg(${idx})" title="Agregar comentario o marcar estado">📝 ${seg ? 'Editar' : 'Comentar'}</button></td>`;
+}
+function filaEditor(x, idx, cols) {
+  const seg = anSeg?.[x.key] || {};
+  return `<tr style="background:#F8FAFC"><td colspan="${cols}">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0">
+      <b style="font-size:12px">${esc(x.nombre)}:</b>
+      <select id="anSegEstado" onchange="document.getElementById('anSegMotivo').style.display=this.value==='no_contactar'?'':'none'">
+        <option value="">— Sin estado —</option>
+        ${Object.entries(SEG_ESTADOS).map(([k, t]) => `<option value="${k}" ${seg.estado === k ? 'selected' : ''}>${t}</option>`).join('')}
+      </select>
+      <select id="anSegMotivo" style="${seg.estado === 'no_contactar' ? '' : 'display:none'}">
+        ${SEG_MOTIVOS.map(m => `<option ${seg.motivo === m ? 'selected' : ''}>${m}</option>`).join('')}
+      </select>
+      <input id="anSegComentario" type="text" maxlength="300" value="${esc(seg.comentario || '')}" placeholder="Comentario (ej: respondió que se mudó a Viña)" style="flex:1;min-width:220px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">
+      <button class="btn btn-primary btn-sm" onclick="window._bridge.anGuardarSeg(${idx})">Guardar</button>
+      <button class="btn btn-ghost btn-sm" onclick="window._bridge.anEditarSeg(-1)">Cancelar</button>
+    </div></td></tr>`;
+}
+async function guardarSeg(idx, cambios) {
+  const x = anFilas[idx]; if (!x) return;
+  const fila = { cliente_key: x.key, nombre: x.nombre, telefono: x.telefono || null, ...(anSeg[x.key] ? {} : { estado: null, motivo: null, comentario: null, contactado_en: null }), ...cambios, actualizado_en: new Date().toISOString() };
+  const { error } = await sb.from('clientes_seguimiento').upsert(fila, { onConflict: 'cliente_key' });
+  if (error) { toast('No se pudo guardar el seguimiento: ' + error.message, 'error'); return false; }
+  anSeg[x.key] = { ...(anSeg[x.key] || {}), ...fila };
+  return true;
+}
+window._bridge.anEditarSeg = idx => { anState.editando = idx >= 0 ? anFilas[idx]?.key : null; renderRiesgo(anCitas); };
+window._bridge.anGuardarSeg = async idx => {
+  const estado = document.getElementById('anSegEstado').value || null;
+  const ok = await guardarSeg(idx, {
+    estado, motivo: estado === 'no_contactar' ? document.getElementById('anSegMotivo').value : null,
+    comentario: document.getElementById('anSegComentario').value.trim() || null,
+    ...(estado && estado !== 'no_contactar' && !anSeg[anFilas[idx].key]?.contactado_en ? { contactado_en: today() } : {}),
+  });
+  if (ok) { anState.editando = null; toast(estado === 'no_contactar' ? 'Marcado como "no contactar": ya no aparece en las listas' : 'Seguimiento guardado'); renderRiesgo(anCitas); }
+};
+window._bridge.anContactado = async idx => {
+  const x = anFilas[idx]; if (!x) return;
+  const prev = anSeg[x.key];
+  const estado = prev?.estado && prev.estado !== 'contactado' ? prev.estado : 'contactado';
+  if (await guardarSeg(idx, { estado, contactado_en: today() })) setTimeout(() => renderRiesgo(anCitas), 300);
+};
 
 async function loadAnalisis() {
   const main = document.getElementById('mainContent');
@@ -39,6 +109,8 @@ async function loadAnalisis() {
     if (anState.vista === 'margen') await renderMargen();
     else {
       const citas = await cargarAgendaCitas();
+      anCitas = citas;
+      if (anState.vista === 'riesgo') await cargarSeguimiento();
       const fuente = document.getElementById('anFuente');
       if (fuente) fuente.textContent = citas.length ? `${citas.length.toLocaleString('es-CL')} citas de AgendaPro, hasta el ${fechaCorta(citas[citas.length - 1].fecha)}` : '';
       if (!citas.length) {
@@ -59,51 +131,69 @@ function filtroBarbero(citas) {
 // ---------- 1. Clientes en riesgo ----------
 function renderRiesgo(citas) {
   const r = anClientesEnRiesgo(citas, today());
+  const seg = anSeg || {};
   const fb = x => !anState.barbero || x.barberoUltimo === anState.barbero;
-  const riesgo = r.riesgo.filter(fb), nuevos = r.nuevosSinVolver.filter(fb), perdidos = r.perdidos.filter(fb);
-  const filaRiesgo = x => `<tr><td><b>${esc(x.nombre)}</b></td><td style="text-align:center">${x.visitas}</td><td>cada ${x.frecuencia} días</td>
-    <td>${fechaCorta(x.ultima)} <span style="color:var(--red);font-size:11px">(hace ${x.diasSinVenir} días)</span></td><td>${esc(x.barberoUltimo)}</td><td>${linkWsp(x.telefono, x.nombre)}</td></tr>`;
+  const bloqueado = x => seg[x.key]?.estado === 'no_contactar';
+  // Los contactados en los últimos 14 días van al final: arriba queda a quién escribirle hoy
+  const reciente = x => { const d = diasDesde(seg[x.key]?.contactado_en); return d !== null && d <= 14; };
+  const ordenar = l => [...l.filter(x => !reciente(x)), ...l.filter(reciente)];
+  const preparar = l => ordenar(l.filter(fb).filter(x => anState.verNoContactar || !bloqueado(x)));
+  const ocultos = [...r.riesgo, ...r.nuevosSinVolver, ...r.perdidos].filter(fb).filter(bloqueado).length;
+  const riesgo = preparar(r.riesgo), nuevos = preparar(r.nuevosSinVolver), perdidos = preparar(r.perdidos);
+  const contactados30 = Object.values(seg).filter(s => { const d = diasDesde(s.contactado_en); return d !== null && d <= 30; }).length;
+  anFilas = [];
+  const reg = x => { anFilas.push(x); return anFilas.length - 1; };
+  const conEditor = (x, i, cols, html) => html + (anState.editando === x.key ? filaEditor(x, i, cols) : '');
+  const filaRiesgo = x => { const i = reg(x); return conEditor(x, i, 7, `<tr style="${bloqueado(x) ? 'opacity:.55' : ''}"><td><b>${esc(x.nombre)}</b></td><td style="text-align:center">${x.visitas}</td><td>cada ${x.frecuencia} días</td>
+    <td>${fechaCorta(x.ultima)} <span style="color:var(--red);font-size:11px">(hace ${x.diasSinVenir} días)</span></td><td>${esc(x.barberoUltimo)}</td><td>${linkWsp(x.telefono, x.nombre, i)}</td>${celdaSeg(x, i)}</tr>`); };
+  const filaNuevo = x => { const i = reg(x); return conEditor(x, i, 6, `<tr style="${bloqueado(x) ? 'opacity:.55' : ''}"><td><b>${esc(x.nombre)}</b></td><td>${fechaCorta(x.ultima)} <span style="color:#64748B;font-size:11px">(hace ${x.diasSinVenir} días)</span></td><td>${esc(x.citas[0].servicio)}</td><td>${esc(x.barberoUltimo)}</td><td>${linkWsp(x.telefono, x.nombre, i)}</td>${celdaSeg(x, i)}</tr>`); };
   window.__anExport = { riesgo, nuevos, perdidos };
+  const thRiesgo = '<tr><th>Cliente</th><th>Visitas</th><th>Venía</th><th>Última visita</th><th>Último barbero</th><th>Contacto</th><th>Seguimiento</th></tr>';
   document.getElementById('anContenido').innerHTML = `
   <div class="grid-4" style="margin-bottom:16px">
     <div class="metric"><div class="metric-label">Clientes activos</div><div class="metric-value">${r.activos}</div><div class="metric-sub">vienen a su ritmo habitual</div></div>
     <div class="metric"><div class="metric-label">En riesgo</div><div class="metric-value" style="color:var(--amber)">${r.riesgo.length}</div><div class="metric-sub">pasaron 1,5× su frecuencia sin volver</div></div>
     <div class="metric"><div class="metric-label">Nuevos que no volvieron</div><div class="metric-value" style="color:var(--amber)">${r.nuevosSinVolver.length}</div><div class="metric-sub">1 visita, hace 30–120 días</div></div>
-    <div class="metric"><div class="metric-label">Perdidos</div><div class="metric-value" style="color:var(--red)">${r.perdidos.length}</div><div class="metric-sub">más de 6 meses sin venir</div></div>
+    <div class="metric"><div class="metric-label">Contactados</div><div class="metric-value" style="color:var(--blue)">${contactados30}</div><div class="metric-sub">en los últimos 30 días · ${r.perdidos.length} perdidos</div></div>
+  </div>
+  <div class="card" style="padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px">
+    <span>${filtroBarbero(citas)}</span>
+    <span style="color:#64748B">Al pulsar 💬 queda registrado "contactado hoy". Con 📝 puedes dejar un comentario o marcar <b>No contactar</b> (ya no aparece en las listas).</span>
+    ${ocultos ? `<label style="margin-left:auto;cursor:pointer"><input type="checkbox" ${anState.verNoContactar ? 'checked' : ''} onchange="window._bridge.anSet('verNoContactar',this.checked)"> Mostrar ${ocultos} marcado${ocultos === 1 ? '' : 's'} "no contactar"</label>` : ''}
   </div>
   <div class="card">
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <div class="card-title" style="margin:0">⚠️ Clientes en riesgo (${riesgo.length})</div>
-      <span style="font-size:11px;color:#64748B">Clientes frecuentes que ya se pasaron de su ritmo habitual. Los primeros de la lista son los más fieles: vale la pena escribirles hoy.</span>
-      <span style="margin-left:auto">${filtroBarbero(citas)}</span>
-      <button class="btn btn-ghost btn-sm" onclick="window._bridge.anExportar('riesgo')">⬇ CSV</button>
+      <span style="font-size:11px;color:#64748B">Clientes frecuentes que ya se pasaron de su ritmo habitual. Los primeros son los más fieles: vale la pena escribirles hoy.</span>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="window._bridge.anExportar('riesgo')">⬇ CSV</button>
     </div>
-    <div style="overflow-x:auto"><table><thead><tr><th>Cliente</th><th>Visitas</th><th>Venía</th><th>Última visita</th><th>Último barbero</th><th>Contacto</th></tr></thead>
-    <tbody>${riesgo.slice(0, 150).map(filaRiesgo).join('') || '<tr><td colspan="6" style="text-align:center;color:#64748B">Nadie en riesgo 🎉</td></tr>'}</tbody></table></div>
+    <div style="overflow-x:auto"><table><thead>${thRiesgo}</thead>
+    <tbody>${riesgo.slice(0, 150).map(filaRiesgo).join('') || '<tr><td colspan="7" style="text-align:center;color:#64748B">Nadie en riesgo 🎉</td></tr>'}</tbody></table></div>
   </div>
   <div class="card">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><div class="card-title" style="margin:0">🆕 Vinieron una vez y no volvieron (${nuevos.length})</div>
       <span style="font-size:11px;color:#64748B">Primera visita hace 30 a 120 días. Una invitación a tiempo puede convertirlos en clientes habituales.</span>
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="window._bridge.anExportar('nuevos')">⬇ CSV</button></div>
-    <div style="overflow-x:auto"><table><thead><tr><th>Cliente</th><th>Visitó</th><th>Servicio</th><th>Barbero</th><th>Contacto</th></tr></thead>
-    <tbody>${nuevos.slice(0, 150).map(x => `<tr><td><b>${esc(x.nombre)}</b></td><td>${fechaCorta(x.ultima)} <span style="color:#64748B;font-size:11px">(hace ${x.diasSinVenir} días)</span></td><td>${esc(x.citas[0].servicio)}</td><td>${esc(x.barberoUltimo)}</td><td>${linkWsp(x.telefono, x.nombre)}</td></tr>`).join('')}</tbody></table></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>Cliente</th><th>Visitó</th><th>Servicio</th><th>Barbero</th><th>Contacto</th><th>Seguimiento</th></tr></thead>
+    <tbody>${nuevos.slice(0, 150).map(filaNuevo).join('')}</tbody></table></div>
   </div>
   <div class="card">
     <div style="display:flex;gap:8px;align-items:center"><div class="card-title" style="margin:0">💤 Perdidos (${perdidos.length})</div>
       <span style="font-size:11px;color:#64748B">Más de 6 meses (o 3 veces su ritmo) sin venir.</span>
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="window._bridge.anSet('listaPerdidos',${!anState.listaPerdidos})">${anState.listaPerdidos ? 'Ocultar' : 'Ver lista'}</button>
       <button class="btn btn-ghost btn-sm" onclick="window._bridge.anExportar('perdidos')">⬇ CSV</button></div>
-    ${anState.listaPerdidos ? `<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>Cliente</th><th>Visitas</th><th>Venía</th><th>Última visita</th><th>Último barbero</th><th>Contacto</th></tr></thead><tbody>${perdidos.slice(0, 300).map(filaRiesgo).join('')}</tbody></table></div>` : ''}
+    ${anState.listaPerdidos ? `<div style="overflow-x:auto;margin-top:10px"><table><thead>${thRiesgo}</thead><tbody>${perdidos.slice(0, 300).map(filaRiesgo).join('')}</tbody></table></div>` : ''}
   </div>
   <div style="font-size:11px;color:#94A3B8;margin:0 0 10px">Los clientes se reconocen por teléfono (o email / nombre si no hay teléfono). "cliente cliente" y citas sin datos no se cuentan.</div>`;
 }
 
 function exportar(cual) {
   const lista = (window.__anExport || {})[cual] || [];
-  const filas = [['Cliente', 'Teléfono', 'Email', 'Visitas', 'Frecuencia (días)', 'Última visita', 'Días sin venir', 'Último barbero']]
-    .concat(lista.map(x => [x.nombre, x.telefono, x.email, x.visitas || 1, x.frecuencia || '', x.ultima, x.diasSinVenir, x.barberoUltimo]));
+  const seg = anSeg || {};
+  const filas = [['Cliente', 'Teléfono', 'Email', 'Visitas', 'Frecuencia (días)', 'Última visita', 'Días sin venir', 'Último barbero', 'Seguimiento', 'Motivo', 'Comentario', 'Contactado el']]
+    .concat(lista.map(x => { const s = seg[x.key] || {}; return [x.nombre, x.telefono, x.email, x.visitas || 1, x.frecuencia || '', x.ultima, x.diasSinVenir, x.barberoUltimo, SEG_ESTADOS[s.estado] || '', s.motivo || '', s.comentario || '', s.contactado_en || '']; }));
   const csv = filas.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
   a.download = `clientes_${cual}_${today()}.csv`; a.click();
 }
 

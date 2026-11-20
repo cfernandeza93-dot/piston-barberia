@@ -227,3 +227,28 @@ test('Historial: un producto pagado con tarjeta también muestra su estado de Ge
   assert.deepEqual(errores, []);
   await page.close();
 });
+
+test('Análisis: seguimiento de clientes (comentario, no contactar, WhatsApp registra contacto)', async () => {
+  const { page, errores } = await abrir();
+  await page.click('.tab-btn:has-text("Análisis")');
+  await page.waitForSelector('#anContenido >> text=Cliente Fiel Riesgo');
+  // WhatsApp: queda "contactado hoy" (la ventana de WhatsApp se bloquea en la prueba)
+  page.on('popup', p => p.close().catch(() => {}));
+  await page.locator('#anContenido tr', { hasText: 'Cliente Nuevo' }).locator('a[href^="https://wa.me/"]').click();
+  await page.waitForFunction(() => window.__db.clientes_seguimiento.some(s => s.nombre === 'Cliente Nuevo' && s.contactado_en));
+  await page.waitForSelector('#anContenido tr:has-text("Cliente Nuevo") >> text=Contactado hoy');
+  // Comentario + no contactar
+  await page.locator('#anContenido tr', { hasText: 'Cliente Fiel Riesgo' }).locator('button:has-text("Comentar")').click();
+  await page.selectOption('#anSegEstado', 'no_contactar');
+  await page.selectOption('#anSegMotivo', 'Se cambió de ciudad');
+  await page.fill('#anSegComentario', 'Se mudó a Viña');
+  await page.click('#anContenido button:has-text("Guardar")');
+  await page.waitForFunction(() => window.__db.clientes_seguimiento.some(s => s.estado === 'no_contactar' && s.comentario === 'Se mudó a Viña'));
+  await page.waitForTimeout(300);
+  assert.ok(!/Cliente Fiel Riesgo/.test(await page.textContent('#anContenido')), 'ya no debe aparecer en la lista');
+  await page.check('#anContenido input[type=checkbox]');
+  await page.waitForSelector('#anContenido >> text=No contactar: Se cambió de ciudad');
+  assert.match(await page.textContent('#anContenido'), /Se mudó a Viña/);
+  assert.deepEqual(errores, []);
+  await page.close();
+});
